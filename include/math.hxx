@@ -234,10 +234,7 @@ template<unsigned N, typename T>
 mat<N, N, T> inverse(const mat<N, N, T> &a)
 {
     mat<N, N, T> m = a;
-    mat<N, N, T> inv{};
-
-    for (unsigned i = 0; i < N; ++i)
-        inv[i][i] = T{ 1 };
+    mat<N, N, T> inv = identity<N, T>();
 
     for (unsigned i = 0; i < N; ++i)
     {
@@ -290,7 +287,7 @@ inline mat4f translation(
     const float y,
     const float z)
 {
-    mat4f m{};
+    mat4f m;
     m[0][0] = 1.0f;
     m[0][3] = x;
     m[1][1] = 1.0f;
@@ -313,7 +310,7 @@ inline mat4f perspective(
     const auto idy = 1 / (top - bottom);
     const auto idz = 1 / (far - near);
 
-    mat4f m{};
+    mat4f m;
     m[0][0] = 2.0f * near * idx;
     m[0][2] = (right + left) * idx;
     m[1][1] = 2.0f * near * idy;
@@ -321,6 +318,7 @@ inline mat4f perspective(
     m[2][2] = -(far + near) * idz;
     m[2][3] = -(2.0f * far * near) * idz;
     m[3][2] = -1.0f;
+    m[3][3] = 0.0f;
 
     return m;
 }
