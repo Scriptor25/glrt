@@ -169,8 +169,8 @@ int main()
 
         const camera_t camera
         {
-            .inv_view = transpose(inverse(view)),
-            .inv_proj = transpose(inverse(proj)),
+            .inv_view = inverse(view),
+            .inv_proj = inverse(proj),
             .origin = { 5.0f, 5.0f, -5.0f },
         };
 
