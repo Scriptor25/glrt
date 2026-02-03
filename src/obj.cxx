@@ -29,54 +29,51 @@ static T from_string(const std::string_view str)
 void object_t::clear()
 {
     indices.clear();
-    positions.clear();
-    normals.clear();
-    textures.clear();
+    vertices.clear();
 }
 
 object_t &object_t::operator+=(const object_t &o)
 {
-    const auto count = positions.size();
+    const auto count = vertices.size();
     for (auto &index : o.indices)
         indices.emplace_back(index + count);
 
-    positions.insert(positions.end(), o.positions.begin(), o.positions.end());
-    normals.insert(normals.end(), o.normals.begin(), o.normals.end());
-    textures.insert(textures.end(), o.textures.begin(), o.textures.end());
+    vertices.insert(vertices.end(), o.vertices.begin(), o.vertices.end());
 
     return *this;
 }
 
 object_t operator*(const mat4f &lhs, const object_t &rhs)
 {
-    std::vector<vec3f> positions, normals;
-
-    for (auto &p : rhs.positions)
-        positions.emplace_back(lhs * p);
+    std::vector<vertex_t> vertices;
 
     const auto n_lhs = inverse(transpose(static_cast<mat3f>(lhs)));
-    for (auto &n : rhs.normals)
-        normals.emplace_back(n_lhs * n);
+
+    for (const auto &v : rhs.vertices)
+        vertices.push_back(
+            {
+                .position = lhs * v.position,
+                .normal = n_lhs * v.normal,
+                .albedo = v.albedo,
+                .roughness = v.roughness,
+                .texture = v.texture,
+            });
 
     return {
         .indices = rhs.indices,
-        .positions = std::move(positions),
-        .normals = std::move(normals),
-        .textures = rhs.textures,
+        .vertices = std::move(vertices),
     };
 }
 
 void read_obj(
     std::istream &stream,
-    object_t &obj)
+    object_t &obj,
+    const vec3f &albedo,
+    float roughness)
 {
-    obj.clear();
-
     std::vector<vec3f> vertex_positions;
     std::vector<vec3f> vertex_normals;
     std::vector<vec2f> vertex_textures;
-
-    std::uint32_t first_index{};
 
     for (std::string line; std::getline(stream, line);)
     {
@@ -89,9 +86,15 @@ void read_obj(
 
         if (parts.front() == "f")
         {
+            auto first_index = obj.vertices.size();
+
             for (std::size_t i = 1; i < parts.size(); ++i)
             {
                 auto segments = split(parts[i], "/");
+
+                auto &vertex = obj.vertices.emplace_back();
+                vertex.albedo = albedo;
+                vertex.roughness = roughness;
 
                 std::int32_t index;
                 switch (segments.size())
@@ -99,73 +102,49 @@ void read_obj(
                 case 1:
                     index = from_string<std::int16_t>(segments.at(0));
                     if (index > 0)
-                        obj.positions.push_back(vertex_positions.at(index - 1));
+                        vertex.position = vertex_positions.at(index - 1);
                     else if (index < 0)
-                        obj.positions.push_back(vertex_positions.at(vertex_positions.size() + index));
-                    else
-                        obj.positions.emplace_back();
-
-                    obj.textures.emplace_back();
-                    obj.normals.emplace_back();
+                        vertex.position = vertex_positions.at(vertex_positions.size() + index);
                     break;
 
                 case 2:
                     index = from_string<std::int16_t>(segments.at(0));
                     if (index > 0)
-                        obj.positions.push_back(vertex_positions.at(index - 1));
+                        vertex.position = vertex_positions.at(index - 1);
                     else if (index < 0)
-                        obj.positions.push_back(vertex_positions.at(vertex_positions.size() + index));
-                    else
-                        obj.positions.emplace_back();
+                        vertex.position = vertex_positions.at(vertex_positions.size() + index);
 
                     index = from_string<std::int16_t>(segments.at(1));
                     if (index > 0)
-                        obj.textures.push_back(vertex_textures.at(index - 1));
+                        vertex.texture = vertex_textures.at(index - 1);
                     else if (index < 0)
-                        obj.textures.push_back(vertex_textures.at(vertex_textures.size() + index));
-                    else
-                        obj.textures.emplace_back();
-
-                    obj.normals.emplace_back();
+                        vertex.texture = vertex_textures.at(vertex_textures.size() + index);
                     break;
 
                 case 3:
                     index = from_string<std::int16_t>(segments.at(0));
                     if (index > 0)
-                        obj.positions.push_back(vertex_positions.at(index - 1));
+                        vertex.position = vertex_positions.at(index - 1);
                     else if (index < 0)
-                        obj.positions.push_back(vertex_positions.at(vertex_positions.size() + index));
-                    else
-                        obj.positions.emplace_back();
+                        vertex.position = vertex_positions.at(vertex_positions.size() + index);
 
                     if (!segments.at(1).empty())
                     {
                         index = from_string<std::int16_t>(segments.at(1));
                         if (index > 0)
-                            obj.textures.push_back(vertex_textures.at(index - 1));
+                            vertex.texture = vertex_textures.at(index - 1);
                         else if (index < 0)
-                            obj.textures.push_back(vertex_textures.at(vertex_textures.size() + index));
-                        else
-                            obj.textures.emplace_back();
-                    }
-                    else
-                    {
-                        obj.textures.emplace_back();
+                            vertex.texture = vertex_textures.at(vertex_textures.size() + index);
                     }
 
                     index = from_string<std::int16_t>(segments.at(2));
                     if (index > 0)
-                        obj.normals.push_back(vertex_normals.at(index - 1));
+                        vertex.normal = vertex_normals.at(index - 1);
                     else if (index < 0)
-                        obj.normals.push_back(vertex_normals.at(vertex_normals.size() + index));
-                    else
-                        obj.normals.emplace_back();
+                        vertex.normal = vertex_normals.at(vertex_normals.size() + index);
                     break;
 
                 default:
-                    obj.positions.emplace_back();
-                    obj.textures.emplace_back();
-                    obj.normals.emplace_back();
                     break;
                 }
             }
@@ -179,7 +158,6 @@ void read_obj(
                 obj.indices.push_back(first_index + i + 1);
             }
 
-            first_index = first_index + vertex_count;
             continue;
         }
 

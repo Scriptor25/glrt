@@ -149,12 +149,6 @@ vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
 }
 
 template<unsigned N, typename T>
-auto operator<=>(const vec<N, T> &lhs, const vec<N, T> &rhs)
-{
-    return std::lexicographical_compare_three_way(lhs.e, lhs.e + N, rhs.e, rhs.e + N);
-}
-
-template<unsigned N, typename T>
 vec<N, T> normalize(const vec<N, T> &v)
 {
     return v / v.length();
@@ -177,6 +171,24 @@ vec<3, T> cross(const vec<3, T> &lhs, const vec<3, T> &rhs)
         lhs[2] * rhs[0] - lhs[0] * rhs[2],
         lhs[0] * rhs[1] - lhs[1] * rhs[0],
     };
+}
+
+template<unsigned N, typename T>
+vec<N, T> min(const vec<N, T> &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = std::min(lhs[i], rhs[i]);
+    return v;
+}
+
+template<unsigned N, typename T>
+vec<N, T> max(const vec<N, T> &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = std::max(lhs[i], rhs[i]);
+    return v;
 }
 
 template<unsigned N, typename T>
@@ -325,9 +337,10 @@ inline mat4f perspective(
 
 inline mat4f perspective(const float fov, const float aspect, const float near, const float far)
 {
-    const auto s = 1.0f / std::tan(fov * 0.5f * M_PIf / 180.0f);
+    const auto s = 1.0f / std::tan(fov * 0.5f * 3.14159265358979323846f / 180.0f);
 
     mat4f m;
+
     m[0][0] = s / aspect;
     m[1][1] = s;
     m[2][2] = -(far + near) / (far - near);

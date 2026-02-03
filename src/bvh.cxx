@@ -5,8 +5,8 @@
 box_t box_union(const box_t &a, const box_t &b)
 {
     return {
-        std::min(a.min, b.min),
-        std::max(a.max, b.max)
+        min(a.min, b.min),
+        max(a.max, b.max)
     };
 }
 
@@ -32,8 +32,8 @@ std::uint32_t build_bvh_node(
     for (auto i = begin; i < end; ++i)
     {
         bounds = box_union(bounds, tris[i].bounds);
-        centroid_bounds.min = std::min(centroid_bounds.min, tris[i].centroid);
-        centroid_bounds.max = std::max(centroid_bounds.max, tris[i].centroid);
+        centroid_bounds.min = min(centroid_bounds.min, tris[i].centroid);
+        centroid_bounds.max = max(centroid_bounds.max, tris[i].centroid);
     }
 
     const auto node_index = static_cast<std::uint32_t>(nodes.size());
@@ -42,10 +42,12 @@ std::uint32_t build_bvh_node(
     if (const auto count = end - begin; count <= MAX_LEAF_TRIS)
     {
         nodes[node_index] = {
-            bounds.min,
-            tris[begin].index,
-            bounds.max,
-            count
+            .box_min = bounds.min,
+            .box_max = bounds.max,
+            .left = 0xffffffffu,
+            .right = 0xffffffffu,
+            .begin = begin,
+            .end = end,
         };
         return node_index;
     }
@@ -68,46 +70,49 @@ std::uint32_t build_bvh_node(
     const auto right = build_bvh_node(nodes, tris, mid, end);
 
     nodes[node_index] = {
-        bounds.min,
-        left,
-        bounds.max,
-        right
+        .box_min = bounds.min,
+        .box_max = bounds.max,
+        .left = left,
+        .right = right,
+        .begin = 0xffffffffu,
+        .end = 0xffffffffu,
     };
-
     return node_index;
 }
 
-std::vector<bvh_node_t> build_bvh(
-    const std::vector<std::uint32_t> &indices,
-    const std::vector<vec3f> &positions)
+void build_bvh(const object_t &obj, std::vector<bvh_node_t> &nodes, std::vector<uint32_t> &map)
 {
-    const std::uint32_t tri_count = indices.size() / 3;
+    std::vector<triangle_t> tris;
 
-    std::vector<triangle_t> tris(tri_count);
-
-    for (std::uint32_t i = 0; i < tri_count; ++i)
+    for (std::uint32_t i = 0; i < obj.indices.size(); i += 3)
     {
-        auto p0 = positions[indices[i * 3 + 0]];
-        auto p1 = positions[indices[i * 3 + 1]];
-        auto p2 = positions[indices[i * 3 + 2]];
+        const auto i0 = obj.indices[i + 0];
+        const auto i1 = obj.indices[i + 1];
+        const auto i2 = obj.indices[i + 2];
+
+        auto &p0 = obj.vertices[i0].position;
+        auto &p1 = obj.vertices[i1].position;
+        auto &p2 = obj.vertices[i2].position;
 
         const box_t bounds
         {
-            .min = std::min(p0, std::min(p1, p2)),
-            .max = std::max(p0, std::max(p1, p2)),
+            .min = min(p0, min(p1, p2)),
+            .max = max(p0, max(p1, p2)),
         };
 
-        tris[i] = {
-            i,
-            bounds,
-            (p0 + p1 + p2) / 3.0f
-        };
+        tris.push_back(
+            {
+                .index = i,
+                .bounds = bounds,
+                .centroid = (p0 + p1 + p2) / 3.0f,
+            });
     }
 
-    std::vector<bvh_node_t> nodes;
-    nodes.reserve(tri_count * 2);
+    nodes.clear();
+    nodes.reserve(tris.size() * 2);
+    build_bvh_node(nodes, tris, 0, tris.size());
 
-    build_bvh_node(nodes, tris, 0, tri_count);
-
-    return nodes;
+    map.resize(tris.size());
+    for (unsigned i = 0; i < tris.size(); ++i)
+        map[i] = tris[i].index;
 }

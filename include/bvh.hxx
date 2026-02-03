@@ -2,9 +2,10 @@
 
 #include <cstdint>
 #include <math.hxx>
+#include <obj.hxx>
 #include <vector>
 
-constexpr std::uint32_t MAX_LEAF_TRIS = 4;
+constexpr std::uint32_t MAX_LEAF_TRIS = 8;
 
 struct box_t
 {
@@ -12,17 +13,23 @@ struct box_t
     vec3f max;
 };
 
-struct bvh_node_t
+struct alignas(16) bvh_node_t
 {
     vec3f box_min;
-    std::uint32_t left;
+    float _0{};
+
     vec3f box_max;
-    std::uint32_t right;
+    float _1{};
+
+    std::uint32_t left{};
+    std::uint32_t right{};
+    std::uint32_t begin{};
+    std::uint32_t end{};
 };
 
 struct triangle_t
 {
-    std::uint32_t index;
+    std::uint32_t index{};
     box_t bounds;
     vec3f centroid;
 };
@@ -36,6 +43,4 @@ std::uint32_t build_bvh_node(
     std::uint32_t begin,
     std::uint32_t end);
 
-std::vector<bvh_node_t> build_bvh(
-    const std::vector<std::uint32_t> &indices,
-    const std::vector<vec3f> &positions);
+void build_bvh(const object_t &obj, std::vector<bvh_node_t> &nodes, std::vector<uint32_t> &map);

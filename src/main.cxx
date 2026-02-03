@@ -21,21 +21,16 @@ int main()
 
     if (std::ifstream stream("asset/cube.obj"); stream)
     {
-        auto model = translation(-0.5f, 0.0f, -4.0f);
-
-        object_t obj;
-        read_obj(stream, obj);
-        data += model * obj;
+        read_obj(stream, data, { 0.8f, 0.2f, 0.1f }, 0.8f);
+        data = translation(-1.0f, 0.5f, 2.3f) * data;
     }
 
     if (std::ifstream stream("asset/teapot.obj"); stream)
-    {
-        object_t obj;
-        read_obj(stream, obj);
-        data += obj;
-    }
+        read_obj(stream, data, { 0.8f, 0.8f, 0.8f }, 0.1f);
 
-    auto bvh_nodes = build_bvh(data.indices, data.positions);
+    std::vector<bvh_node_t> bvh_nodes;
+    std::vector<std::uint32_t> bvh_map;
+    build_bvh(data, bvh_nodes, bvh_map);
 
     std::string vert_source;
     if (std::ifstream stream("asset/default.vert", std::istream::ate); stream)
@@ -53,8 +48,6 @@ int main()
         stream.read(frag_source.data(), static_cast<std::streamsize>(frag_source.size()));
     }
 
-    mat4f view{}, proj{};
-
     glfwInit();
 
     glfwDefaultWindowHints();
@@ -68,33 +61,28 @@ int main()
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    GLuint sbo[6];
+    GLuint sbo[5];
     glCreateBuffers(sizeof(sbo) / sizeof(GLuint), sbo);
 
     glNamedBufferData(
-        sbo[0],
+        sbo[1],
         static_cast<GLsizeiptr>(data.indices.size() * sizeof(std::uint32_t)),
         data.indices.data(),
         GL_STATIC_DRAW);
     glNamedBufferData(
-        sbo[1],
-        static_cast<GLsizeiptr>(data.positions.size() * sizeof(vec3f)),
-        data.positions.data(),
-        GL_STATIC_DRAW);
-    glNamedBufferData(
         sbo[2],
-        static_cast<GLsizeiptr>(data.normals.size() * sizeof(vec3f)),
-        data.normals.data(),
+        static_cast<GLsizeiptr>(data.vertices.size() * sizeof(vertex_t)),
+        data.vertices.data(),
         GL_STATIC_DRAW);
     glNamedBufferData(
         sbo[3],
-        static_cast<GLsizeiptr>(data.textures.size() * sizeof(vec2f)),
-        data.textures.data(),
+        static_cast<GLsizeiptr>(bvh_nodes.size() * sizeof(bvh_node_t)),
+        bvh_nodes.data(),
         GL_STATIC_DRAW);
     glNamedBufferData(
         sbo[4],
-        static_cast<GLsizeiptr>(bvh_nodes.size() * sizeof(bvh_node_t)),
-        bvh_nodes.data(),
+        static_cast<GLsizeiptr>(bvh_map.size() * sizeof(std::uint32_t)),
+        bvh_map.data(),
         GL_STATIC_DRAW);
 
     auto program = glCreateProgram();
@@ -145,18 +133,17 @@ int main()
 
     glLinkProgram(program);
 
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sbo[0]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sbo[1]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sbo[2]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sbo[3]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sbo[4]);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, sbo[0]);
 
-    glBindBufferBase(GL_UNIFORM_BUFFER, 1, sbo[5]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sbo[1]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sbo[2]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sbo[3]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sbo[4]);
 
-    view = lookAt(
-        { 5.0f, 5.0f, -5.0f },
-        { 0.0f, 1.0f, 0.0f },
-        { 0.0f, 1.0f, 0.0f });
+    vec3f origin{ 4.0f, 3.0f, 6.0f };
+    vec3f target{ 1.0f, 1.0f, 1.0f };
+
+    auto view = lookAt(origin, target, { 0.0f, 1.0f, 0.0f });
 
     while (!glfwWindowShouldClose(window))
     {
@@ -165,17 +152,17 @@ int main()
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
 
-        proj = perspective(70.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+        auto proj = perspective(60.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
 
         const camera_t camera
         {
             .inv_view = inverse(view),
             .inv_proj = inverse(proj),
-            .origin = { 5.0f, 5.0f, -5.0f },
+            .origin = origin,
         };
 
         glNamedBufferData(
-            sbo[5],
+            sbo[0],
             sizeof(camera_t),
             &camera,
             GL_STATIC_DRAW);

@@ -7,23 +7,45 @@ struct ray_t {
 
 struct record_t {
     float t;
+    float roughness;
     vec3 position;
     vec3 normal;
+    vec3 albedo;
     vec2 texture;
+};
+
+struct vertex_t {
+    vec3 position;
+    float _0;
+
+    vec3 normal;
+    float _1;
+
+    vec3 albedo;
+    float roughness;
+
+    vec2 texture;
+    float _3[2];
 };
 
 struct bvh_node_t {
     vec3 box_min;
-    uint left;
+    float _0;
+
     vec3 box_max;
+    float _1;
+
+    uint left;
     uint right;
+    uint begin;
+    uint end;
 };
 
 layout (location = 0) in vec2 uv;
 
 layout (location = 0) out vec4 color;
 
-layout (binding = 1) uniform camera_buffer {
+layout (row_major, binding = 0) uniform camera_buffer {
     mat4 inv_view;
     mat4 inv_proj;
     vec3 origin;
@@ -32,27 +54,26 @@ layout (binding = 1) uniform camera_buffer {
 layout (std430, binding = 1) buffer index_buffer {
     uint indices[];
 };
-layout (std430, binding = 2) buffer position_buffer {
-    vec3 positions[];
+layout (std430, binding = 2) buffer vertex_buffer {
+    vertex_t vertices[];
 };
-layout (std430, binding = 3) buffer normal_buffer {
-    vec3 normals[];
-};
-layout (std430, binding = 4) buffer texture_buffer {
-    vec2 textures[];
-};
-layout (std430, binding = 5) buffer bvh_node_buffer {
+layout (std430, binding = 3) buffer node_buffer {
     bvh_node_t nodes[];
+};
+layout (std430, binding = 4) buffer map_buffer {
+    uint bvh_map[];
 };
 
 const float EPSILON = 1e-4;
 const float PI = 3.14159265359;
 
-const uint MAX_BOUNCES = 50u;
+const uint MAX_BOUNCES = 5u;
 
 vec3 ray_at(in ray_t self, in float t) {
     return self.origin + self.direction * t;
 }
+
+uint seed;
 
 uint hash(uint x) {
     x ^= x >> 16;
@@ -68,7 +89,7 @@ float rand(inout uint seed) {
     return float(seed) / float(0xffffffffu);
 }
 
-vec3 random_unit_vector(inout uint seed) {
+vec3 random_unit_vector() {
     float z = rand(seed) * 2.0 - 1.0;
     float a = rand(seed) * 2.0 * PI;
     float r = sqrt(max(0.0, 1.0 - z * z));
@@ -91,15 +112,15 @@ bool hit_box(in ray_t ray, in vec3 box_min, in vec3 box_max, in float t_max) {
     return t_exit >= max(t_enter, 0.0) && t_enter < t_max;
 }
 
-bool hit_triangle(in ray_t ray, in uint tri, inout record_t rec) {
+bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
 
-    uint i0 = indices[tri * 3 + 0];
-    uint i1 = indices[tri * 3 + 1];
-    uint i2 = indices[tri * 3 + 2];
+    uint i0 = indices[base + 0];
+    uint i1 = indices[base + 1];
+    uint i2 = indices[base + 2];
 
-    vec3 p0 = positions[i0];
-    vec3 p1 = positions[i1];
-    vec3 p2 = positions[i2];
+    vec3 p0 = vertices[i0].position;
+    vec3 p1 = vertices[i1].position;
+    vec3 p2 = vertices[i2].position;
 
     vec3 e1 = p1 - p0;
     vec3 e2 = p2 - p0;
@@ -131,9 +152,9 @@ bool hit_triangle(in ray_t ray, in uint tri, inout record_t rec) {
 
     float w = 1.0 - u - v;
 
-    vec3 n0 = normals[i0];
-    vec3 n1 = normals[i1];
-    vec3 n2 = normals[i2];
+    vec3 n0 = vertices[i0].normal;
+    vec3 n1 = vertices[i1].normal;
+    vec3 n2 = vertices[i2].normal;
 
     rec.normal = normalize(
         n0 * w +
@@ -141,19 +162,50 @@ bool hit_triangle(in ray_t ray, in uint tri, inout record_t rec) {
         n2 * v
     );
 
-    vec2 t0 = textures[i0];
-    vec2 t1 = textures[i1];
-    vec2 t2 = textures[i2];
+    vec3 a0 = vertices[i0].albedo;
+    vec3 a1 = vertices[i1].albedo;
+    vec3 a2 = vertices[i2].albedo;
+
+    rec.albedo =
+        a0 * w +
+        a1 * u +
+        a2 * v;
+
+    vec2 t0 = vertices[i0].texture;
+    vec2 t1 = vertices[i1].texture;
+    vec2 t2 = vertices[i2].texture;
 
     rec.texture =
         t0 * w +
         t1 * u +
         t2 * v;
 
+    float r0 = vertices[i0].roughness;
+    float r1 = vertices[i1].roughness;
+    float r2 = vertices[i2].roughness;
+
+    rec.roughness =
+        r0 * w +
+        r1 * u +
+        r2 * v;
+
     return true;
 }
 
 bool hit(in ray_t ray, inout record_t rec) {
+
+    bool hit_anything = false;
+
+    for (uint i = 0u; i < indices.length(); i += 3) {
+        if (hit_triangle(ray, i, rec)) {
+            hit_anything = true;
+        }
+    }
+
+    return hit_anything;
+}
+
+bool hit_bvh(in ray_t ray, inout record_t rec) {
 
     bool hit_anything = false;
 
@@ -170,16 +222,14 @@ bool hit(in ray_t ray, inout record_t rec) {
         if (!hit_box(ray, node.box_min, node.box_max, rec.t))
             continue;
 
-        if (node.right <= 4u) {
-            uint first = node.left;
-            uint count = node.right;
-
-            for (uint i = 0u; i < count; ++i) {
-                if (hit_triangle(ray, first + i * 3u, rec))
+        if (node.begin != node.end) {
+            for (uint i = node.begin; i < node.end; ++i) {
+                if (hit_triangle(ray, bvh_map[i], rec)) {
                     hit_anything = true;
+                }
             }
         }
-        else {
+        else if (stack_ptr + 2 < 64) {
             stack[stack_ptr++] = node.left;
             stack[stack_ptr++] = node.right;
         }
@@ -189,10 +239,12 @@ bool hit(in ray_t ray, inout record_t rec) {
 }
 
 void scatter(inout ray_t ray, in record_t rec) {
-    vec3 N = faceforward(rec.normal, -ray.direction, rec.normal);
+    ray.origin = rec.position + rec.normal * EPSILON;
 
-    ray.origin = rec.position + N * EPSILON;
-    ray.direction = normalize(reflect(ray.direction, N)/* + random_unit_vector(seed)*/);
+    vec3 reflected = reflect(ray.direction, rec.normal);
+    vec3 lambertian = rec.normal + random_unit_vector();
+
+    ray.direction = normalize(mix(reflected, lambertian, rec.roughness));
 }
 
 vec3 miss(in ray_t ray) {
@@ -203,7 +255,7 @@ vec3 miss(in ray_t ray) {
 const uint frame_index = 1u;
 
 void main() {
-    uint seed =
+    seed =
         uint(gl_FragCoord.x) * 1973u ^
         uint(gl_FragCoord.y) * 9277u ^
         frame_index * 26699u;
@@ -228,14 +280,14 @@ void main() {
 
         rec.t = 1e30;
 
-        if (!hit(ray, rec)) {
+        if (!hit_bvh(ray, rec)) {
             radiance += throughput * miss(ray);
             break;
         }
 
-        throughput *= vec3(0.8);
-
         scatter(ray, rec);
+
+        throughput *= rec.albedo;
     }
 
     color = vec4(radiance, 1.0);
