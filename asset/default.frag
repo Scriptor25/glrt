@@ -49,7 +49,10 @@ layout (row_major, binding = 0) uniform camera_buffer {
     mat4 inv_view;
     mat4 inv_proj;
     vec3 origin;
+    uint frame;
 } camera;
+
+layout(rgba32f, binding = 0) uniform image2D accumulation;
 
 layout (std430, binding = 1) buffer index_buffer {
     uint indices[];
@@ -67,13 +70,11 @@ layout (std430, binding = 4) buffer map_buffer {
 const float EPSILON = 1e-4;
 const float PI = 3.14159265359;
 
-const uint MAX_BOUNCES = 5u;
-
 vec3 ray_at(in ray_t self, in float t) {
     return self.origin + self.direction * t;
 }
 
-uint seed;
+uint seed = 0u;
 
 uint hash(uint x) {
     x ^= x >> 16;
@@ -84,14 +85,14 @@ uint hash(uint x) {
     return x;
 }
 
-float rand(inout uint seed) {
+float rand() {
     seed = hash(seed);
     return float(seed) / float(0xffffffffu);
 }
 
 vec3 random_unit_vector() {
-    float z = rand(seed) * 2.0 - 1.0;
-    float a = rand(seed) * 2.0 * PI;
+    float z = rand() * 2.0 - 1.0;
+    float a = rand() * 2.0 * PI;
     float r = sqrt(max(0.0, 1.0 - z * z));
     return vec3(r * cos(a), r * sin(a), z);
 }
@@ -249,21 +250,45 @@ void scatter(inout ray_t ray, in record_t rec) {
 
 vec3 miss(in ray_t ray) {
     float t = 0.5 * (ray.direction.y + 1.0);
-    return mix(vec3(0.8, 0.9, 1.0), vec3(0.2, 0.4, 0.8), t);
+    vec3 sky = mix(vec3(0.8, 0.9, 1.0), vec3(0.2, 0.4, 0.8), t);
+
+    vec3 sun_direction = normalize(vec3(-0.1, 0.7, 0.5));
+    float sun_dot = max(dot(ray.direction, sun_direction), 0.0);
+
+    float sun_disk = pow(sun_dot, 2000.0);
+
+    float sun_glow = pow(sun_dot, 50.0);
+
+    vec3 sun_color = vec3(1.0, 0.95, 0.8);
+
+    vec3 color = sky;
+    color += sun_color * sun_disk * 20.0;
+    color += sun_color * sun_glow * 0.5;
+
+    return color;
 }
 
-const uint frame_index = 1u;
-
 void main() {
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    vec4 samples = imageLoad(accumulation, pixel);
+
+    if (camera.frame >= 1000) {
+        color = samples / 1000;
+        return;
+    }
+
     seed =
-        uint(gl_FragCoord.x) * 1973u ^
-        uint(gl_FragCoord.y) * 9277u ^
-        frame_index * 26699u;
+        uint(pixel.x) * 1973u ^
+        uint(pixel.y) * 9277u ^
+        camera.frame * 26699u;
 
     vec3 radiance   = vec3(0.0);
     vec3 throughput = vec3(1.0);
 
-    vec2 ndc = uv * 2.0 - 1.0;
+    vec2 delta = 1.0 / imageSize(accumulation);
+    vec2 offset = vec2(delta.x * rand(), delta.y * rand());
+
+    vec2 ndc = (uv + offset) * 2.0 - 1.0;
 
     vec4 clip = vec4(ndc, -1.0, 1.0);
     vec4 view = camera.inv_proj * clip;
@@ -276,7 +301,7 @@ void main() {
     ray.direction = direction;
 
     record_t rec;
-    for (uint bounce = 0u; bounce < MAX_BOUNCES; ++bounce) {
+    for (uint bounce = 0u; bounce < 3u; ++bounce) {
 
         rec.t = 1e30;
 
@@ -286,9 +311,11 @@ void main() {
         }
 
         scatter(ray, rec);
-
         throughput *= rec.albedo;
     }
 
-    color = vec4(radiance, 1.0);
+    samples = vec4(samples.rgb + radiance, 1.0);
+    imageStore(accumulation, pixel, samples);
+
+    color = vec4(samples.rgb / (float(camera.frame) + 1.0), 1.0);
 }

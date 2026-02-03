@@ -6,7 +6,7 @@
 template<unsigned N, typename T>
 struct vec
 {
-    vec operator-() const
+    constexpr vec operator-() const
     {
         vec v;
         for (unsigned i = 0; i < N; ++i)
@@ -14,17 +14,17 @@ struct vec
         return v;
     }
 
-    T &operator[](unsigned i)
+    constexpr T &operator[](unsigned i)
     {
         return e[i];
     }
 
-    const T &operator[](unsigned i) const
+    constexpr const T &operator[](unsigned i) const
     {
         return e[i];
     }
 
-    [[nodiscard]] T length_squared() const
+    [[nodiscard]] constexpr T length_squared() const
     {
         T t{};
         for (unsigned i = 0; i < N; ++i)
@@ -32,12 +32,12 @@ struct vec
         return t;
     }
 
-    [[nodiscard]] T length() const
+    [[nodiscard]] constexpr T length() const
     {
         return std::sqrt(length_squared());
     }
 
-    explicit operator vec<N - 1, T>() const
+    explicit constexpr operator vec<N - 1, T>() const
     {
         vec<N - 1, T> v;
         for (unsigned i = 0; i < N - 1; ++i)
@@ -51,17 +51,17 @@ struct vec
 template<unsigned N, unsigned M, typename T>
 struct mat
 {
-    vec<M, T> &operator[](unsigned i)
+    constexpr vec<M, T> &operator[](unsigned i)
     {
         return e[i];
     }
 
-    const vec<M, T> &operator[](unsigned i) const
+    constexpr const vec<M, T> &operator[](unsigned i) const
     {
         return e[i];
     }
 
-    explicit operator mat<N - 1, M - 1, T>() const
+    explicit constexpr operator mat<N - 1, M - 1, T>() const
     {
         mat<N - 1, M - 1, T> m;
         for (unsigned j = 0; j < N - 1; ++j)
@@ -107,7 +107,7 @@ std::ostream &operator<<(std::ostream &stream, const mat<N, M, T> &m)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -116,7 +116,7 @@ vec<N, T> operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -125,7 +125,7 @@ vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator*(const vec<N, T> &lhs, const T &rhs)
+constexpr vec<N, T> operator*(const vec<N, T> &lhs, const T &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -134,7 +134,7 @@ vec<N, T> operator*(const vec<N, T> &lhs, const T &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -143,19 +143,19 @@ vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
+constexpr vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
 {
     return lhs * (T{ 1 } / rhs);
 }
 
 template<unsigned N, typename T>
-vec<N, T> normalize(const vec<N, T> &v)
+constexpr vec<N, T> normalize(const vec<N, T> &v)
 {
     return v / v.length();
 }
 
 template<unsigned N, typename T>
-T dot(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr T dot(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     T t{};
     for (unsigned i = 0; i < N; ++i)
@@ -164,7 +164,7 @@ T dot(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<typename T>
-vec<3, T> cross(const vec<3, T> &lhs, const vec<3, T> &rhs)
+constexpr vec<3, T> cross(const vec<3, T> &lhs, const vec<3, T> &rhs)
 {
     return {
         lhs[1] * rhs[2] - lhs[2] * rhs[1],
@@ -174,7 +174,7 @@ vec<3, T> cross(const vec<3, T> &lhs, const vec<3, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> min(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> min(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -183,7 +183,7 @@ vec<N, T> min(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> max(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> max(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -192,7 +192,7 @@ vec<N, T> max(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N, T> operator*(const mat<N, N, T> &lhs, const vec<N, T> &rhs)
+constexpr vec<N, T> operator*(const mat<N, N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
 
@@ -204,7 +204,7 @@ vec<N, T> operator*(const mat<N, N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-vec<N - 1, T> operator*(const mat<N, N, T> &lhs, const vec<N - 1, T> &rhs)
+constexpr vec<N - 1, T> operator*(const mat<N, N, T> &lhs, const vec<N - 1, T> &rhs)
 {
     vec<N - 1, T> v;
 
@@ -224,7 +224,25 @@ vec<N - 1, T> operator*(const mat<N, N, T> &lhs, const vec<N - 1, T> &rhs)
 }
 
 template<unsigned N, typename T>
-mat<N, N, T> identity()
+constexpr mat<N, N, T> operator*(const mat<N, N, T> &lhs, const mat<N, N, T> &rhs)
+{
+    mat<N, N, T> m;
+
+    for (unsigned i = 0; i < N; ++i)
+        for (unsigned j = 0; j < N; ++j)
+        {
+            T sum{};
+            for (unsigned k = 0; k < N; ++k)
+                sum += lhs[i][k] * rhs[k][j];
+
+            m[i][j] = sum;
+        }
+
+    return m;
+}
+
+template<unsigned N, typename T>
+constexpr mat<N, N, T> identity()
 {
     mat<N, N, T> m;
     for (unsigned i = 0; i < N; ++i)
@@ -233,7 +251,7 @@ mat<N, N, T> identity()
 }
 
 template<unsigned N, unsigned M, typename T>
-mat<N, M, T> transpose(const mat<M, N, T> &a)
+constexpr mat<N, M, T> transpose(const mat<M, N, T> &a)
 {
     mat<N, M, T> m{};
     for (unsigned j = 0; j < M; ++j)
@@ -243,7 +261,7 @@ mat<N, M, T> transpose(const mat<M, N, T> &a)
 }
 
 template<unsigned N, typename T>
-mat<N, N, T> inverse(const mat<N, N, T> &a)
+constexpr mat<N, N, T> inverse(const mat<N, N, T> &a)
 {
     mat<N, N, T> m = a;
     mat<N, N, T> inv = identity<N, T>();
@@ -294,7 +312,7 @@ mat<N, N, T> inverse(const mat<N, N, T> &a)
     return inv;
 }
 
-inline mat4f translation(
+constexpr mat4f translation(
     const float x,
     const float y,
     const float z)
@@ -310,7 +328,20 @@ inline mat4f translation(
     return m;
 }
 
-inline mat4f perspective(
+constexpr mat4f scale(
+    const float x,
+    const float y,
+    const float z)
+{
+    mat4f m;
+    m[0][0] = x;
+    m[1][1] = y;
+    m[2][2] = z;
+    m[3][3] = 1.0f;
+    return m;
+}
+
+constexpr mat4f perspective(
     const float left,
     const float right,
     const float top,
@@ -335,7 +366,7 @@ inline mat4f perspective(
     return m;
 }
 
-inline mat4f perspective(const float fov, const float aspect, const float near, const float far)
+constexpr mat4f perspective(const float fov, const float aspect, const float near, const float far)
 {
     const auto s = 1.0f / std::tan(fov * 0.5f * 3.14159265358979323846f / 180.0f);
 
@@ -351,7 +382,7 @@ inline mat4f perspective(const float fov, const float aspect, const float near, 
     return m;
 }
 
-inline mat4f lookAt(const vec3f &eye, const vec3f &center, const vec3f &up)
+constexpr mat4f lookAt(const vec3f &eye, const vec3f &center, const vec3f &up)
 {
     auto z = normalize(eye - center);
     auto x = normalize(cross(up, z));
