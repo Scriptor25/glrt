@@ -1,6 +1,6 @@
 #include <algorithm>
-#include <bvh.hxx>
 #include <limits>
+#include <glrt/bvh.hxx>
 
 box_t box_union(const box_t &a, const box_t &b)
 {
@@ -80,7 +80,7 @@ std::uint32_t build_bvh_node(
     return node_index;
 }
 
-void build_bvh(const object_t &obj, std::vector<bvh_node_t> &nodes, std::vector<uint32_t> &map)
+void build_bvh(const object_t &obj, bvh_t &bvh)
 {
     std::vector<triangle_t> tris;
 
@@ -108,11 +108,11 @@ void build_bvh(const object_t &obj, std::vector<bvh_node_t> &nodes, std::vector<
             });
     }
 
-    nodes.clear();
-    nodes.reserve(tris.size() * 2);
-    build_bvh_node(nodes, tris, 0, tris.size());
+    bvh.nodes.clear();
+    bvh.nodes.reserve(tris.size() * 2);
+    build_bvh_node(bvh.nodes, tris, 0, tris.size());
 
-    map.resize(tris.size());
+    bvh.map.resize(tris.size());
     for (unsigned i = 0; i < tris.size(); ++i)
-        map[i] = tris[i].index;
+        bvh.map[i] = tris[i].index;
 }

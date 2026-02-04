@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <math.hxx>
-#include <obj.hxx>
 #include <vector>
+#include <glrt/math.hxx>
+#include <glrt/obj.hxx>
 
 constexpr std::uint32_t MAX_LEAF_TRIS = 8;
 
@@ -27,6 +27,12 @@ struct alignas(16) bvh_node_t
     std::uint32_t end{};
 };
 
+struct bvh_t
+{
+    std::vector<bvh_node_t> nodes;
+    std::vector<std::uint32_t> map;
+};
+
 struct triangle_t
 {
     std::uint32_t index{};
@@ -43,4 +49,4 @@ std::uint32_t build_bvh_node(
     std::uint32_t begin,
     std::uint32_t end);
 
-void build_bvh(const object_t &obj, std::vector<bvh_node_t> &nodes, std::vector<uint32_t> &map);
+void build_bvh(const object_t &obj, bvh_t &bvh);

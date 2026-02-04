@@ -1,12 +1,15 @@
-#include <bvh.hxx>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <istream>
-#include <math.hxx>
-#include <obj.hxx>
 #include <vector>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#include <glrt/bvh.hxx>
+#include <glrt/gl.hxx>
+#include <glrt/math.hxx>
+#include <glrt/obj.hxx>
+#include <glrt/window.hxx>
 
 struct camera_t
 {
@@ -19,9 +22,16 @@ struct camera_t
 struct context_t
 {
     camera_t camera;
-    GLuint vertex_array{};
-    GLuint buffers[5]{};
-    GLuint accumulation{};
+
+    gl::VertexArray vertex_array;
+    gl::Texture accumulation;
+
+    gl::Buffer camera_buffer;
+    gl::Buffer index_buffer;
+    gl::Buffer vertex_buffer;
+    gl::Buffer material_buffer;
+    gl::Buffer node_buffer;
+    gl::Buffer map_buffer;
 };
 
 static void framebuffer_size_callback(GLFWwindow *window, const int width, const int height)
@@ -30,22 +40,12 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width, const
 
     context->camera.frame = {};
 
-    const auto proj = perspective(60.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+    const auto proj = perspective(45.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
     context->camera.inv_proj = inverse(proj);
 
-    glDeleteTextures(1, &context->accumulation);
-    glCreateTextures(GL_TEXTURE_2D, 1, &context->accumulation);
-    glTextureStorage2D(context->accumulation, 1, GL_RGBA32F, width, height);
-    glClearTexImage(context->accumulation, 0, GL_RGBA, GL_FLOAT, nullptr);
-
-    glBindImageTexture(
-        0,
-        context->accumulation,
-        0,
-        false,
-        0,
-        GL_READ_WRITE,
-        GL_RGBA32F);
+    context->accumulation.Recreate(GL_TEXTURE_2D);
+    context->accumulation.Storage2D(1, GL_RGBA32F, width, height);
+    context->accumulation.BindImage(0, 0, false, 0, GL_READ_WRITE, GL_RGBA32F);
 
     glViewport(0, 0, width, height);
 }
@@ -64,13 +64,104 @@ static void debug_callback(
     std::cerr << message << std::endl;
 }
 
+static int load_shader(const std::filesystem::path &path, const GLenum type, const GLuint program)
+{
+    std::vector<char> source;
+    if (std::ifstream stream(path, std::istream::ate); stream)
+    {
+        source.resize(stream.tellg());
+        stream.seekg(0, std::ios::beg);
+        stream.read(source.data(), static_cast<std::streamsize>(source.size()));
+    }
+
+    const auto shader = glCreateShader(type);
+    const auto data_ptr = source.data();
+    const auto length = static_cast<GLint>(source.size());
+
+    glShaderSource(shader, 1, &data_ptr, &length);
+    glCompileShader(shader);
+
+    GLint status;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    if (!status)
+    {
+        char buf[1024];
+        GLsizei len;
+        glGetShaderInfoLog(shader, sizeof(buf), &len, buf);
+        buf[len] = 0;
+        std::cerr << buf << std::endl;
+        return 1;
+    }
+
+    glAttachShader(program, shader);
+    glDeleteShader(shader);
+
+    return 0;
+}
+
+static void generate_scene(object_t &data)
+{
+    {
+        object_t cornell;
+        read_obj("asset/cornell.obj", cornell);
+        data += scale(4.0f, 4.0f, 4.0f) * cornell;
+    }
+
+    {
+        object_t teapot;
+        read_obj("asset/teapot.obj", teapot);
+        data += translation(0.0f, -4.0f, 0.0f) * teapot;
+    }
+}
+
+static void generate_scene1(object_t &data)
+{
+    {
+        object_t plane;
+        read_obj("asset/plane.obj", plane);
+        data += scale(10.0f, 1.0f, 10.0f) * translation(-0.5f, 0.0f, -0.5f) * plane;
+    }
+
+    {
+        object_t cube;
+        read_obj("asset/cube.obj", cube);
+        data += translation(-1.0f, 0.01f, 2.3f) * cube;
+    }
+
+    {
+        object_t cube;
+        read_obj("asset/cube.obj", cube);
+        data += translation(2.9f, 0.01f, 2.6f) * cube;
+    }
+
+    {
+        object_t cube;
+        read_obj("asset/cube.obj", cube);
+        data += translation(2.6f, 0.01f, -1.2f) * cube;
+    }
+
+    {
+        object_t teapot;
+        read_obj("asset/teapot.obj", teapot);
+        data += translation(0.0f, 0.01f, 0.0f) * teapot;
+    }
+}
+
 int main()
 {
-    constexpr vec3f origin{ 4.0f, 3.0f, 6.0f };
-    constexpr vec3f target{ 1.0f, 1.0f, 1.0f };
+    constexpr vec3f origin{ 0.0f, 0.0f, 14.0f };
+    constexpr vec3f target{ 0.0f, 0.0f, 0.0f };
 
     constexpr auto view = lookAt(origin, target, { 0.0f, 1.0f, 0.0f });
     constexpr auto inv_view = inverse(view);
+
+    object_t data;
+    generate_scene(data);
+
+    bvh_t bvh;
+    build_bvh(data, bvh);
+
+    const Window window;
 
     context_t context
     {
@@ -78,90 +169,11 @@ int main()
             .inv_view = inv_view,
             .origin = origin,
         },
+        .accumulation = gl::Texture(GL_TEXTURE_2D),
     };
 
-    object_t data;
-
-    if (std::ifstream stream("asset/plane.obj"); stream)
-    {
-        object_t plane;
-        read_obj(stream, plane, { 0.9f, 0.9f, 0.9f }, 0.95f);
-        data += scale(10.0f, 1.0f, 10.0f) * translation(-0.5f, 0.0f, -0.5f) * plane;
-    }
-
-    if (std::ifstream stream("asset/cube.obj"); stream)
-    {
-        object_t cube;
-        read_obj(stream, cube, { 0.8f, 0.2f, 0.1f }, 0.8f);
-        data += translation(-1.0f, 0.01f, 2.3f) * cube;
-    }
-
-    if (std::ifstream stream("asset/cube.obj"); stream)
-    {
-        object_t cube;
-        read_obj(stream, cube, { 0.3f, 0.8f, 0.1f }, 0.05f);
-        data += translation(2.9f, 0.01f, 2.6f) * cube;
-    }
-
-    if (std::ifstream stream("asset/cube.obj"); stream)
-    {
-        object_t cube;
-        read_obj(stream, cube, { 0.3f, 0.1f, 0.8f }, 0.5f);
-        data += translation(2.6f, 0.01f, -1.2f) * cube;
-    }
-
-    if (std::ifstream stream("asset/teapot.obj"); stream)
-    {
-        object_t teapot;
-        read_obj(stream, teapot, { 0.8f, 0.8f, 0.8f }, 0.2f);
-        data += translation(0.0f, 0.01f, 0.0f) * teapot;
-    }
-
-    std::vector<bvh_node_t> bvh_nodes;
-    std::vector<std::uint32_t> bvh_map;
-    build_bvh(data, bvh_nodes, bvh_map);
-
-    std::string vert_source;
-    if (std::ifstream stream("asset/default.vert", std::istream::ate); stream)
-    {
-        vert_source.resize(stream.tellg());
-        stream.seekg(0, std::ios::beg);
-        stream.read(vert_source.data(), static_cast<std::streamsize>(vert_source.size()));
-    }
-
-    std::string frag_source;
-    if (std::ifstream stream("asset/default.frag", std::istream::ate); stream)
-    {
-        frag_source.resize(stream.tellg());
-        stream.seekg(0, std::ios::beg);
-        stream.read(frag_source.data(), static_cast<std::streamsize>(frag_source.size()));
-    }
-
-    glfwInit();
-
-    glfwDefaultWindowHints();
-    glfwWindowHint(GLFW_OPENGL_COMPAT_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_FALSE);
-
-    const auto window = glfwCreateWindow(
-        800,
-        600,
-        "GLRT",
-        nullptr,
-        nullptr);
-    if (!window)
-        return 1;
-
-    glfwSetWindowUserPointer(window, &context);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-
-    glfwSwapInterval(1);
-    glfwMakeContextCurrent(window);
-
-    glewInit();
+    window.SetUserPointer(&context);
+    window.SetFramebufferSizeCallback(framebuffer_size_callback);
 
     glDebugMessageCallback(debug_callback, &context);
     glEnable(GL_DEBUG_OUTPUT);
@@ -169,99 +181,59 @@ int main()
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    glCreateVertexArrays(1, &context.vertex_array);
-    glCreateBuffers(sizeof(context.buffers) / sizeof(GLuint), context.buffers);
+    context.camera_buffer.Bind(GL_UNIFORM_BUFFER, 0);
 
-    glNamedBufferData(
-        context.buffers[1],
-        static_cast<GLsizeiptr>(data.indices.size() * sizeof(std::uint32_t)),
+    context.index_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 1);
+    context.vertex_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 2);
+    context.material_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 3);
+    context.node_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 4);
+    context.map_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 5);
+
+    context.index_buffer.Data(
         data.indices.data(),
+        data.indices.size() * sizeof(std::uint32_t),
         GL_STATIC_DRAW);
-    glNamedBufferData(
-        context.buffers[2],
-        static_cast<GLsizeiptr>(data.vertices.size() * sizeof(vertex_t)),
+    context.vertex_buffer.Data(
         data.vertices.data(),
+        data.vertices.size() * sizeof(vertex_t),
         GL_STATIC_DRAW);
-    glNamedBufferData(
-        context.buffers[3],
-        static_cast<GLsizeiptr>(bvh_nodes.size() * sizeof(bvh_node_t)),
-        bvh_nodes.data(),
+    context.material_buffer.Data(
+        data.materials.data(),
+        data.materials.size() * sizeof(material_t),
         GL_STATIC_DRAW);
-    glNamedBufferData(
-        context.buffers[4],
-        static_cast<GLsizeiptr>(bvh_map.size() * sizeof(std::uint32_t)),
-        bvh_map.data(),
+    context.node_buffer.Data(
+        bvh.nodes.data(),
+        bvh.nodes.size() * sizeof(bvh_node_t),
+        GL_STATIC_DRAW);
+    context.map_buffer.Data(
+        bvh.map.data(),
+        bvh.map.size() * sizeof(std::uint32_t),
         GL_STATIC_DRAW);
 
-    auto program = glCreateProgram();
+    const auto program = glCreateProgram();
 
-    {
-        auto shader = glCreateShader(GL_VERTEX_SHADER);
-        auto data_ptr = vert_source.data();
-        auto length = static_cast<GLint>(vert_source.size());
-        glShaderSource(shader, 1, &data_ptr, &length);
-        glCompileShader(shader);
+    if (const auto error = load_shader("asset/default.vert", GL_VERTEX_SHADER, program))
+        return error;
 
-        GLint status;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-        if (!status)
-        {
-            char buf[512];
-            GLsizei len;
-            glGetShaderInfoLog(shader, sizeof(buf), &len, buf);
-            buf[len] = 0;
-            std::cerr << buf << std::endl;
-        }
-
-        glAttachShader(program, shader);
-        glDeleteShader(shader);
-    }
-
-    {
-        auto shader = glCreateShader(GL_FRAGMENT_SHADER);
-        auto data_ptr = frag_source.data();
-        auto length = static_cast<GLint>(frag_source.size());
-        glShaderSource(shader, 1, &data_ptr, &length);
-        glCompileShader(shader);
-
-        GLint status;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-        if (!status)
-        {
-            char buf[512];
-            GLsizei len;
-            glGetShaderInfoLog(shader, sizeof(buf), &len, buf);
-            buf[len] = 0;
-            std::cerr << buf << std::endl;
-        }
-
-        glAttachShader(program, shader);
-        glDeleteShader(shader);
-    }
+    if (const auto error = load_shader("asset/default.frag", GL_FRAGMENT_SHADER, program))
+        return error;
 
     glLinkProgram(program);
+    glValidateProgram(program);
 
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, context.buffers[0]);
-
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, context.buffers[1]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, context.buffers[2]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, context.buffers[3]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, context.buffers[4]);
-
-    glfwShowWindow(window);
+    window.Show();
 
     int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-    framebuffer_size_callback(window, width, height);
+    window.GetFramebufferSize(width, height);
+    framebuffer_size_callback(window.GetHandle(), width, height);
 
-    while (!glfwWindowShouldClose(window))
+    while (!window.ShouldClose())
     {
         glfwPollEvents();
 
-        glNamedBufferData(
-            context.buffers[0],
-            sizeof(camera_t),
+        context.camera_buffer.Data(
             &context.camera,
+            sizeof(camera_t),
             GL_STATIC_DRAW);
 
         context.camera.frame++;
@@ -269,21 +241,12 @@ int main()
         glEnable(GL_DEPTH_TEST);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glBindVertexArray(context.vertex_array);
+        context.vertex_array.Bind();
         glUseProgram(program);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
-        glUseProgram(0);
 
-        glfwSwapBuffers(window);
+        window.SwapBuffers();
     }
 
     glDeleteProgram(program);
-
-    glDeleteVertexArrays(1, &context.vertex_array);
-    glDeleteBuffers(sizeof(context.buffers) / sizeof(GLuint), context.buffers);
-    glDeleteTextures(1, &context.accumulation);
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
 }

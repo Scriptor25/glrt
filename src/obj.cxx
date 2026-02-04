@@ -1,5 +1,7 @@
 #include <charconv>
-#include <obj.hxx>
+#include <filesystem>
+#include <fstream>
+#include <glrt/obj.hxx>
 
 static std::vector<std::string_view> split(const std::string_view line, const std::string_view str)
 {
@@ -30,15 +32,24 @@ void object_t::clear()
 {
     indices.clear();
     vertices.clear();
+    materials.clear();
 }
 
-object_t &object_t::operator+=(const object_t &o)
+object_t &object_t::operator+=(const object_t &other)
 {
-    const auto count = vertices.size();
-    for (auto &index : o.indices)
-        indices.emplace_back(index + count);
+    const auto vertex_count = vertices.size();
+    const auto material_count = materials.size();
 
-    vertices.insert(vertices.end(), o.vertices.begin(), o.vertices.end());
+    for (auto &index : other.indices)
+        indices.emplace_back(index + vertex_count);
+
+    for (auto &vertex : other.vertices)
+        vertices.emplace_back(vertex).material += material_count;
+
+    materials.insert(
+        materials.end(),
+        other.materials.begin(),
+        other.materials.end());
 
     return *this;
 }
@@ -53,27 +64,29 @@ object_t operator*(const mat4f &lhs, const object_t &rhs)
         vertices.push_back(
             {
                 .position = lhs * v.position,
-                .normal = n_lhs * v.normal,
-                .albedo = v.albedo,
-                .roughness = v.roughness,
+                .normal = normalize(n_lhs * v.normal),
                 .texture = v.texture,
+                .material = v.material,
             });
 
     return {
         .indices = rhs.indices,
         .vertices = std::move(vertices),
+        .materials = rhs.materials,
     };
 }
 
-void read_obj(
-    std::istream &stream,
-    object_t &obj,
-    const vec3f &albedo,
-    float roughness)
+void read_obj(const std::filesystem::path &path, object_t &object)
 {
     std::vector<vec3f> vertex_positions;
     std::vector<vec3f> vertex_normals;
     std::vector<vec2f> vertex_textures;
+
+    std::uint32_t material_index;
+
+    std::ifstream stream(path);
+    if (!stream)
+        return;
 
     for (std::string line; std::getline(stream, line);)
     {
@@ -84,17 +97,34 @@ void read_obj(
         if (parts.empty() || parts.front() == "#")
             continue;
 
+        if (parts.front() == "mtllib")
+        {
+            std::filesystem::path libpath = parts.at(1);
+
+            if (libpath.is_relative())
+                libpath = path.parent_path() / libpath;
+
+            read_mtl(libpath, object);
+            continue;
+        }
+
+        if (parts.front() == "usemtl")
+        {
+            auto name = parts.at(1);
+            material_index = object.material_map[std::string(name)];
+            continue;
+        }
+
         if (parts.front() == "f")
         {
-            auto first_index = obj.vertices.size();
+            const auto first_index = object.vertices.size();
 
             for (std::size_t i = 1; i < parts.size(); ++i)
             {
                 auto segments = split(parts[i], "/");
 
-                auto &vertex = obj.vertices.emplace_back();
-                vertex.albedo = albedo;
-                vertex.roughness = roughness;
+                auto &vertex = object.vertices.emplace_back();
+                vertex.material = material_index;
 
                 std::int32_t index;
                 switch (segments.size())
@@ -153,9 +183,9 @@ void read_obj(
 
             for (std::size_t i = 1; i + 1 < vertex_count; ++i)
             {
-                obj.indices.push_back(first_index);
-                obj.indices.push_back(first_index + i);
-                obj.indices.push_back(first_index + i + 1);
+                object.indices.push_back(first_index);
+                object.indices.push_back(first_index + i);
+                object.indices.push_back(first_index + i + 1);
             }
 
             continue;
@@ -191,5 +221,63 @@ void read_obj(
         }
 
         // std::cerr << line << std::endl;
+    }
+}
+
+void read_mtl(const std::filesystem::path &path, object_t &object)
+{
+    std::ifstream stream(path);
+    if (!stream)
+        return;
+
+    material_t *material{};
+
+    for (std::string line; std::getline(stream, line);)
+    {
+        if (line.empty() || line.starts_with('#'))
+            continue;
+
+        auto parts = split(line, " ");
+        if (parts.empty() || parts.front() == "#")
+            continue;
+
+        if (parts.front() == "newmtl")
+        {
+            auto name = parts.at(1);
+            object.material_map.emplace(name, object.materials.size());
+            material = &object.materials.emplace_back();
+            continue;
+        }
+
+        if (!material)
+            continue;
+
+        if (parts.front() == "Kd")
+        {
+            material->albedo[0] = from_string<float>(parts.at(1));
+            material->albedo[1] = from_string<float>(parts.at(2));
+            material->albedo[2] = from_string<float>(parts.at(3));
+            continue;
+        }
+
+        if (parts.front() == "Ke")
+        {
+            material->emission[0] = from_string<float>(parts.at(1));
+            material->emission[1] = from_string<float>(parts.at(2));
+            material->emission[2] = from_string<float>(parts.at(3));
+            continue;
+        }
+
+        if (parts.front() == "Pr")
+        {
+            material->roughness = from_string<float>(parts.at(1));
+            continue;
+        }
+
+        if (parts.front() == "Pm")
+        {
+            material->metallic = from_string<float>(parts.at(1));
+            continue;
+        }
     }
 }

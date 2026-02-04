@@ -1,6 +1,10 @@
 # Utah Teapot Model
 # Version: 2025 - Cem Yuksel
 # Triangle Mesh Resolution: 16 (33462 faces)
+mtllib teapot.mtl
+
+usemtl white
+
 o Utah Teapot
 
 v -1.681641 2.24989 0

@@ -7,34 +7,38 @@ struct ray_t {
 
 struct record_t {
     float t;
-    float roughness;
     vec3 position;
     vec3 normal;
-    vec3 albedo;
     vec2 texture;
+    uint material;
 };
 
 struct vertex_t {
     vec3 position;
     float _0;
-
     vec3 normal;
     float _1;
-
-    vec3 albedo;
-    float roughness;
-
     vec2 texture;
-    float _3[2];
+    uint material;
+    float _2;
+};
+
+struct material_t {
+    vec3 albedo;
+    float _0;
+    vec3 emission;
+    float roughness;
+    float metallic;
+    float sheen;
+    float clearcoat_thickness;
+    float clearcoat_roughness;
 };
 
 struct bvh_node_t {
     vec3 box_min;
     float _0;
-
     vec3 box_max;
     float _1;
-
     uint left;
     uint right;
     uint begin;
@@ -60,10 +64,13 @@ layout (std430, binding = 1) buffer index_buffer {
 layout (std430, binding = 2) buffer vertex_buffer {
     vertex_t vertices[];
 };
-layout (std430, binding = 3) buffer node_buffer {
+layout (std430, binding = 3) buffer material_buffer {
+    material_t materials[];
+};
+layout (std430, binding = 4) buffer node_buffer {
     bvh_node_t nodes[];
 };
-layout (std430, binding = 4) buffer map_buffer {
+layout (std430, binding = 5) buffer map_buffer {
     uint bvh_map[];
 };
 
@@ -95,6 +102,29 @@ vec3 random_unit_vector() {
     float a = rand() * 2.0 * PI;
     float r = sqrt(max(0.0, 1.0 - z * z));
     return vec3(r * cos(a), r * sin(a), z);
+}
+
+vec3 cosine_sample_hemisphere() {
+    float u1 = rand();
+    float u2 = rand();
+
+    float r = sqrt(u1);
+    float phi = 2.0 * PI * u2;
+
+    float x = r * cos(phi);
+    float y = r * sin(phi);
+    float z = sqrt(max(0.0, 1.0 - u1));
+
+    return vec3(x, y, z);
+}
+
+mat3 make_tbn(vec3 n) {
+    vec3 t = normalize(abs(n.z) < 0.999
+        ? cross(n, vec3(0, 0, 1))
+        : cross(n, vec3(0, 1, 0)));
+
+    vec3 b = cross(n, t);
+    return mat3(t, b, n);
 }
 
 bool hit_box(in ray_t ray, in vec3 box_min, in vec3 box_max, in float t_max) {
@@ -129,7 +159,7 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
     vec3 p = cross(ray.direction, e2);
     float det = dot(e1, p);
 
-    if (abs(det) < EPSILON)
+    if (/* abs */(det) < EPSILON)
         return false;
 
     float inv_det = 1.0 / det;
@@ -157,20 +187,14 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
     vec3 n1 = vertices[i1].normal;
     vec3 n2 = vertices[i2].normal;
 
-    rec.normal = normalize(
+    vec3 nr = cross(e1, e2);
+    vec3 n = normalize(
         n0 * w +
         n1 * u +
         n2 * v
     );
 
-    vec3 a0 = vertices[i0].albedo;
-    vec3 a1 = vertices[i1].albedo;
-    vec3 a2 = vertices[i2].albedo;
-
-    rec.albedo =
-        a0 * w +
-        a1 * u +
-        a2 * v;
+    rec.normal = faceforward(n, ray.direction, nr);
 
     vec2 t0 = vertices[i0].texture;
     vec2 t1 = vertices[i1].texture;
@@ -181,14 +205,11 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
         t1 * u +
         t2 * v;
 
-    float r0 = vertices[i0].roughness;
-    float r1 = vertices[i1].roughness;
-    float r2 = vertices[i2].roughness;
+    uint m0 = vertices[i0].material;
+    uint m1 = vertices[i1].material;
+    uint m2 = vertices[i2].material;
 
-    rec.roughness =
-        r0 * w +
-        r1 * u +
-        r2 * v;
+    rec.material = max(m0, max(m1, m2)); // TODO: material interpolation
 
     return true;
 }
@@ -239,13 +260,26 @@ bool hit_bvh(in ray_t ray, inout record_t rec) {
     return hit_anything;
 }
 
-void scatter(inout ray_t ray, in record_t rec) {
-    ray.origin = rec.position + rec.normal * EPSILON;
+bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3 radiance) {
+    if (rec.material >= materials.length())
+        return false;
+
+    material_t material = materials[rec.material];
+
+    if (length(material.emission) != 0) {
+        radiance += throughput * material.emission;
+        return false;
+    }
 
     vec3 reflected = reflect(ray.direction, rec.normal);
     vec3 lambertian = rec.normal + random_unit_vector();
 
-    ray.direction = normalize(mix(reflected, lambertian, rec.roughness));
+    ray.origin = rec.position + rec.normal * EPSILON;
+    ray.direction = normalize(mix(reflected, lambertian, material.roughness));
+
+    throughput *= material.albedo;
+
+    return true;
 }
 
 vec3 miss(in ray_t ray) {
@@ -272,8 +306,8 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec4 samples = imageLoad(accumulation, pixel);
 
-    if (camera.frame >= 1000) {
-        color = samples / 1000;
+    if (camera.frame >= 200) {
+        color = samples / 200;
         return;
     }
 
@@ -306,12 +340,13 @@ void main() {
         rec.t = 1e30;
 
         if (!hit_bvh(ray, rec)) {
-            radiance += throughput * miss(ray);
+            // radiance += throughput * miss(ray);
             break;
         }
 
-        scatter(ray, rec);
-        throughput *= rec.albedo;
+        if (!scatter(ray, rec, throughput, radiance)) {
+            break;
+        }
     }
 
     samples = vec4(samples.rgb + radiance, 1.0);
