@@ -22,7 +22,7 @@ Window::Window()
     glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_FALSE);
 
     m_Handle = glfwCreateWindow(
-        800,
+        600,
         600,
         "GLRT",
         nullptr,

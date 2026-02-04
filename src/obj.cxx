@@ -279,5 +279,23 @@ void read_mtl(const std::filesystem::path &path, object_t &object)
             material->metallic = from_string<float>(parts.at(1));
             continue;
         }
+
+        if (parts.front() == "Ps")
+        {
+            material->sheen = from_string<float>(parts.at(1));
+            continue;
+        }
+
+        if (parts.front() == "Pc")
+        {
+            material->clearcoat_thickness = from_string<float>(parts.at(1));
+            continue;
+        }
+
+        if (parts.front() == "Pcr")
+        {
+            material->clearcoat_roughness = from_string<float>(parts.at(1));
+            continue;
+        }
     }
 }
