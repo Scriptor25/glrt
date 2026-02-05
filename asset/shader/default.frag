@@ -49,7 +49,7 @@ layout (location = 0) in vec2 uv;
 
 layout (location = 0) out vec4 color;
 
- layout (row_major, binding = 0) uniform data_buffer {
+layout (row_major, binding = 0) uniform data_buffer {
     mat4 inv_view;
     mat4 inv_proj;
     vec3 origin;
@@ -92,6 +92,10 @@ layout (std430, binding = 7) buffer light_area_buffer {
 const float EPSILON = 1e-4;
 const float PI = 3.14159265359;
 
+const uint MAX_SAMPLES_ROOT = 30;
+const uint MAX_SAMPLES = MAX_SAMPLES_ROOT * MAX_SAMPLES_ROOT;
+const float INV_MAX_SAMPLES_ROOT = 1.0 / float(MAX_SAMPLES_ROOT);
+
 /* ray */
 
 vec3 ray_at(in ray_t self, in float t) {
@@ -116,17 +120,9 @@ float random() {
     return float(seed) / float(0xffffffffu);
 }
 
-vec3 random_unit_vector() {
-    float z = random() * 2.0 - 1.0;
-    float a = random() * 2.0 * PI;
-    float r = sqrt(max(0.0, 1.0 - z * z));
-    return vec3(r * cos(a), r * sin(a), z);
-}
-
 mat3 make_tbn(in vec3 n) {
-    vec3 t = normalize(abs(n.z) < 0.999
-                    ? cross(n, vec3(0, 0, 1))
-                    : cross(n, vec3(0, 1, 0)));
+    vec3 v = mix(vec3(0, 0, 1), vec3(0, 1, 0), step(0.999, abs(n.z)));
+    vec3 t = normalize(cross(n, v));
 
     vec3 b = cross(n, t);
     return mat3(t, b, n);
@@ -166,24 +162,28 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
     vec3 p = cross(ray.direction, e2);
     float det = dot(e1, p);
 
-    if (/* abs */(det) < EPSILON)
+    if (/* abs */(det) < EPSILON) {
         return false;
+    }
 
     float inv_det = 1.0 / det;
 
     vec3 s = ray.origin - p0;
     float u = inv_det * dot(s, p);
-    if (u < 0.0 || u > 1.0)
+    if (u < 0.0 || u > 1.0) {
         return false;
+    }
 
     vec3 q = cross(s, e1);
     float v = inv_det * dot(ray.direction, q);
-    if (v < 0.0 || u + v > 1.0)
+    if (v < 0.0 || u + v > 1.0) {
         return false;
+    }
 
     float t = inv_det * dot(e2, q);
-    if (t < EPSILON || t >= rec.t)
+    if (t < EPSILON || t >= rec.t) {
         return false;
+    }
 
     rec.t = t;
     rec.position = ray_at(ray, t);
@@ -195,11 +195,7 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
     vec3 n2 = vertices[i2].normal;
 
     vec3 nr = cross(e1, e2);
-    vec3 n = normalize(
-        n0 * w +
-        n1 * u +
-        n2 * v
-    );
+    vec3 n = normalize(n0 * w + n1 * u + n2 * v);
 
     rec.normal = faceforward(n, ray.direction, nr);
 
@@ -207,16 +203,14 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
     vec2 t1 = vertices[i1].texture;
     vec2 t2 = vertices[i2].texture;
 
-    rec.texture =
-        t0 * w +
-        t1 * u +
-        t2 * v;
+    rec.texture = t0 * w + t1 * u + t2 * v;
 
     uint m0 = vertices[i0].material;
     uint m1 = vertices[i1].material;
     uint m2 = vertices[i2].material;
 
-    rec.material = max(m0, max(m1, m2)); // TODO: material interpolation
+    // TODO: material interpolation
+    rec.material = max(m0, max(m1, m2));
 
     return true;
 }
@@ -248,8 +242,9 @@ bool hit_bvh(in ray_t ray, inout record_t rec) {
         uint node_index = stack[--stack_ptr];
         bvh_node_t node = nodes[node_index];
 
-        if (!hit_box(ray, node.box_min, node.box_max, rec.t))
+        if (!hit_box(ray, node.box_min, node.box_max, rec.t)) {
             continue;
+        }
 
         if (node.begin != node.end) {
             for (uint i = node.begin; i < node.end; ++i) {
@@ -324,11 +319,7 @@ vec3 sample_GGX(in vec2 xi, in float roughness) {
     float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
     float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-    return vec3(
-        sin_theta * cos(phi),
-        sin_theta * sin(phi),
-        cos_theta
-    );
+    return vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
 }
 
 vec3 sample_clearcoat(in vec2 xi, in float roughness) {
@@ -338,11 +329,7 @@ vec3 sample_clearcoat(in vec2 xi, in float roughness) {
     float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
     float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-    return vec3(
-        sin_theta * cos(phi),
-        sin_theta * sin(phi),
-        cos_theta
-    );
+    return vec3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
 }
 
 vec3 sample_cosine_hemisphere() {
@@ -352,58 +339,20 @@ vec3 sample_cosine_hemisphere() {
     float r = sqrt(u1);
     float phi = 2.0 * PI * u2;
 
-    return vec3(
-        r * cos(phi),
-        r * sin(phi),
-        sqrt(1.0 - u1)
-    );
+    return vec3(r * cos(phi), r * sin(phi), sqrt(1.0 - u1));
 }
 
-vec3 sample_triangle(in vec3 p0, in vec3 p1, in vec3 p2, in float u1, in float u2) {
-    float su1 = sqrt(u1);
-    return
-    (1.0 - su1) * p0 +
-    su1 * (1.0 - u2) * p1 +
-    su1 * u2 * p2;
-}
+vec3 sample_triangle(in vec3 p0, in vec3 p1, in vec3 p2) {
+    float u = random();
+    float v = random();
 
-bool sample_light_direction(in record_t rec, out vec3 L, out float pdf_light) {
-    uint light_count = light_triangles.length();
-    if (light_count == 0)
-        return false;
+    float su = sqrt(u);
 
-    uint idx = min(uint(random() * light_count), light_count - 1u);
-    uint tri = light_triangles[idx];
+    float w0 = 1.0 - su;
+    float w1 = su * (1.0 - v);
+    float w2 = su * v;
 
-    uint i0 = indices[tri + 0];
-    uint i1 = indices[tri + 1];
-    uint i2 = indices[tri + 2];
-
-    vec3 p0 = vertices[i0].position;
-    vec3 p1 = vertices[i1].position;
-    vec3 p2 = vertices[i2].position;
-
-    vec3 light_pos = sample_triangle(p0, p1, p2, random(), random());
-
-    vec3 toL = light_pos - rec.position;
-    float dist2 = dot(toL, toL);
-    float dist = sqrt(dist2);
-    toL /= dist;
-
-    float NoL = max(dot(rec.normal, toL), 0.0);
-    if (NoL <= 0.0)
-        return false;
-
-    vec3 light_n = normalize(cross(p1 - p0, p2 - p0));
-    float LoN = max(dot(-toL, light_n), 0.0);
-    if (LoN <= 0.0)
-        return false;
-
-    // area -> solid angle PDF
-    pdf_light = dist2 / (LoN * light_areas[idx]) * (1.0 / float(light_count));
-
-    L = toL;
-    return true;
+    return w0 * p0 + w1 * p1 + w2 * p2;
 }
 
 /* pdf */
@@ -411,8 +360,9 @@ bool sample_light_direction(in record_t rec, out vec3 L, out float pdf_light) {
 float pdf_GGX(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
     float NoH = max(dot(N, H), 0.0);
     float VoH = max(dot(V, H), 0.0);
-    if (NoH <= 0.0 || VoH <= 0.0)
+    if (NoH <= 0.0 || VoH <= 0.0) {
         return 0.0;
+    }
 
     float a = roughness * roughness;
     float D = D_GGX(NoH, a);
@@ -423,8 +373,9 @@ float pdf_GGX(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
 /* scatter */
 
 bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3 radiance) {
-    if (rec.material >= materials.length())
+    if (rec.material >= materials.length()) {
         return false;
+    }
 
     material_t mat = materials[rec.material];
 
@@ -436,8 +387,9 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
     vec3 N = rec.normal;
     vec3 V = normalize(-ray.direction);
     float NoV = max(dot(N, V), 0.0);
-    if (NoV <= 0.0)
+    if (NoV <= 0.0) {
         return false;
+    }
 
     mat3 tbn = make_tbn(N);
 
@@ -464,7 +416,9 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         L = reflect(-V, H);
 
         float NoL = max(dot(N, L), 0.0);
-        if (NoL <= 0.0) return false;
+        if (NoL <= 0.0) {
+            return false;
+        }
 
         float NoH = max(dot(N, H), 0.0);
         float VoH = max(dot(V, H), 0.0);
@@ -484,7 +438,9 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         L = reflect(-V, H);
 
         float NoL = max(dot(N, L), 0.0);
-        if (NoL <= 0.0) return false;
+        if (NoL <= 0.0) {
+            return false;
+        }
 
         float NoH = max(dot(N, H), 0.0);
         float VoH = max(dot(V, H), 0.0);
@@ -503,8 +459,9 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         L = normalize(tbn * L_local);
 
         float NoL = max(dot(N, L), 0.0);
-        if (NoL <= 0.0)
+        if (NoL <= 0.0) {
             return false;
+        }
 
         vec3 F = fresnel_schlick(NoV, F0);
         vec3 kd = (1.0 - F) * (1.0 - mat.metallic);
@@ -552,18 +509,20 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec4 samples = imageLoad(accumulation, pixel);
 
-    if (data.frame >= 2000) {
-        color = samples / 2000;
+    if (data.frame >= MAX_SAMPLES) {
+        color = sqrt(samples / MAX_SAMPLES);
         return;
     }
+
+    vec2 grid_sample = (vec2(data.frame % MAX_SAMPLES_ROOT, data.frame / MAX_SAMPLES_ROOT) + vec2(random(), random())) * INV_MAX_SAMPLES_ROOT - 0.5;
 
     seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ data.frame * 26699u;
 
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
 
-    vec2 delta = 1.0 / vec2(imageSize(accumulation));
-    vec2 offset = vec2(delta.x * random(), delta.y * random());
+    vec2 pixel_delta = 1.0 / vec2(imageSize(accumulation));
+    vec2 offset = vec2(pixel_delta.x * grid_sample.x, pixel_delta.y * grid_sample.y);
 
     vec2 ndc = (uv + offset) * 2.0 - 1.0;
 
@@ -583,7 +542,7 @@ void main() {
         rec.t = 1e30;
 
         if (!hit_bvh(ray, rec)) {
-            // radiance += throughput * miss(ray);
+            radiance += throughput * miss(ray);
             break;
         }
 
@@ -595,5 +554,5 @@ void main() {
     samples = vec4(samples.rgb + radiance, 1.0);
     imageStore(accumulation, pixel, samples);
 
-    color = vec4(samples.rgb / (float(data.frame) + 1.0), 1.0);
+    color = vec4(sqrt(samples.rgb / (float(data.frame) + 1.0)), 1.0);
 }
