@@ -89,10 +89,10 @@ layout (std430, binding = 7) buffer light_area_buffer {
 
 /* constant */
 
-const float EPSILON = 1e-4;
+const float EPSILON = 1e-5;
 const float PI = 3.14159265359;
 
-const uint MAX_SAMPLES_ROOT = 30;
+const uint MAX_SAMPLES_ROOT = 50;
 const uint MAX_SAMPLES = MAX_SAMPLES_ROOT * MAX_SAMPLES_ROOT;
 const float INV_MAX_SAMPLES_ROOT = 1.0 / float(MAX_SAMPLES_ROOT);
 
@@ -146,7 +146,7 @@ bool hit_box(in ray_t ray, in vec3 box_min, in vec3 box_max, in float t_max) {
     return t_exit >= max(t_enter, 0.0) && t_enter < t_max;
 }
 
-bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
+bool hit_triangle(in ray_t ray, in bool test, in uint base, inout record_t rec) {
 
     uint i0 = indices[base + 0];
     uint i1 = indices[base + 1];
@@ -185,6 +185,10 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
         return false;
     }
 
+    if (test) {
+        return true;
+    }
+
     rec.t = t;
     rec.position = ray_at(ray, t);
 
@@ -205,22 +209,17 @@ bool hit_triangle(in ray_t ray, in uint base, inout record_t rec) {
 
     rec.texture = t0 * w + t1 * u + t2 * v;
 
-    uint m0 = vertices[i0].material;
-    uint m1 = vertices[i1].material;
-    uint m2 = vertices[i2].material;
-
-    // TODO: material interpolation
-    rec.material = max(m0, max(m1, m2));
+    rec.material = vertices[i0].material;
 
     return true;
 }
 
-bool hit(in ray_t ray, inout record_t rec) {
+bool hit(in ray_t ray, in bool test, inout record_t rec) {
 
     bool hit_anything = false;
 
     for (uint i = 0u; i < indices.length(); i += 3) {
-        if (hit_triangle(ray, i, rec)) {
+        if (hit_triangle(ray, test, i, rec)) {
             hit_anything = true;
         }
     }
@@ -228,7 +227,7 @@ bool hit(in ray_t ray, inout record_t rec) {
     return hit_anything;
 }
 
-bool hit_bvh(in ray_t ray, inout record_t rec) {
+bool hit_bvh(in ray_t ray, in bool test, inout record_t rec) {
 
     bool hit_anything = false;
 
@@ -248,8 +247,11 @@ bool hit_bvh(in ray_t ray, inout record_t rec) {
 
         if (node.begin != node.end) {
             for (uint i = node.begin; i < node.end; ++i) {
-                if (hit_triangle(ray, bvh_map[i], rec)) {
+                if (hit_triangle(ray, test, bvh_map[i], rec)) {
                     hit_anything = true;
+                    if (test) {
+                        return true;
+                    }
                 }
             }
         }
@@ -274,8 +276,8 @@ vec3 fresnel_sheen(in float cos_theta, in vec3 sheen_color) {
 
 /* D (distribution) */
 
-float D_GGX(in float NoH, in float alpha) {
-    float a2 = alpha * alpha;
+float D_GGX(in float NoH, in float roughness) {
+    float a2 = roughness * roughness;
     float d = NoH * NoH * (a2 - 1.0) + 1.0;
     return a2 / (PI * d * d);
 }
@@ -355,22 +357,134 @@ vec3 sample_triangle(in vec3 p0, in vec3 p1, in vec3 p2) {
     return w0 * p0 + w1 * p1 + w2 * p2;
 }
 
+uint sample_light(out float light_pdf) {
+    float r = random() * data.total_light_area;
+
+    float accum = 0.0;
+    for (uint i = 0u; i < light_areas.length(); ++i) {
+        accum += light_areas[i];
+        if (r <= accum) {
+            light_pdf = light_areas[i] / data.total_light_area;
+            return i;
+        }
+    }
+
+    light_pdf = light_areas[0] / data.total_light_area;
+    return 0;
+}
+
+void sample_light_point(in uint base, out vec3 position, out vec3 normal, out vec3 emission) {
+    uint i0 = indices[base + 0];
+    uint i1 = indices[base + 1];
+    uint i2 = indices[base + 2];
+
+    vec3 p0 = vertices[i0].position;
+    vec3 p1 = vertices[i1].position;
+    vec3 p2 = vertices[i2].position;
+
+    position = sample_triangle(p0, p1, p2);
+
+    normal = normalize(cross(p1 - p0, p2 - p0));
+
+    emission = materials[vertices[i0].material].emission;
+}
+
 /* pdf */
 
-float pdf_GGX(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
+float pdf_specular(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
     float NoH = max(dot(N, H), 0.0);
     float VoH = max(dot(V, H), 0.0);
     if (NoH <= 0.0 || VoH <= 0.0) {
         return 0.0;
     }
 
-    float a = roughness * roughness;
-    float D = D_GGX(NoH, a);
+    float D = D_GGX(NoH, roughness);
 
-    return (D * NoH) / max(4.0 * VoH, 1e-6);
+    return (D * NoH) / max(4.0 * VoH, EPSILON);
+}
+
+float pdf_light(in float light_select_pdf, in float area, in vec3 Ln, in vec3 L, in float dist2) {
+    if (area < EPSILON) {
+        return 0.0;
+    }
+
+    float cos_light = dot(Ln, -L);
+    if (cos_light < EPSILON) {
+        return 0.0;
+    }
+
+    float pdf_area = light_select_pdf / area;
+    return pdf_area * dist2 / cos_light;
+}
+
+float pdf_diffuse(in vec3 N, in vec3 L) {
+    float NoL = max(dot(N, L), 0.0);
+    return NoL / PI;
+}
+
+float pdf_clearcoat(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
+    float NoH = max(dot(N, H), 0.0);
+    float VoH = max(dot(V, H), 0.0);
+    if (NoH <= 0.0 || VoH <= 0.0) {
+        return 0.0;
+    }
+
+    float D = D_GGX_Clearcoat(NoH, roughness);
+
+    return (D * NoH) / max(4.0 * VoH, EPSILON);
+}
+
+float pdf_bsdf(in vec3 N, in vec3 H, in vec3 L, in uint material, in float w_diffuse, in float w_specular, in float w_clearcoat) {
+    float NoL = max(dot(N, L), 0.0);
+    if (NoL < 0.0) {
+        return 0.0;
+    }
+
+    material_t mat = materials[material];
+
+    float pdf = 0.0;
+
+    if (w_diffuse > 0.0) {
+        pdf += w_diffuse * pdf_diffuse(N, L);
+    }
+
+    if (w_specular > 0.0) {
+        pdf += w_specular * pdf_specular(N, H, L, mat.roughness);
+    }
+
+    if (w_clearcoat > 0.0) {
+        pdf += w_clearcoat * pdf_clearcoat(N, H, L, mat.clearcoat_roughness);
+    }
+
+    return pdf;
 }
 
 /* scatter */
+
+bool visible(in vec3 Sp, in vec3 Sn, in vec3 Lp) {
+    vec3 direction = Lp - Sp;
+    float distance = length(direction);
+    direction /= distance;
+
+    ray_t shadow_ray;
+    shadow_ray.origin = Sp + Sn * EPSILON;
+    shadow_ray.direction = direction;
+
+    record_t tmp;
+    tmp.t = distance - 2.0 * EPSILON;
+
+    return !hit_bvh(shadow_ray, true, tmp);
+}
+
+float power_heuristic(in float pdf_a, in float pdf_b) {
+    float a2 = pdf_a * pdf_a;
+    float b2 = pdf_b * pdf_b;
+    float denom = a2 + b2;
+    if (denom < EPSILON) {
+        return 0.0;
+    }
+    return clamp(a2 / denom, 0.0, 1.0);
+}
 
 bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3 radiance) {
     if (rec.material >= materials.length()) {
@@ -391,25 +505,63 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         return false;
     }
 
-    mat3 tbn = make_tbn(N);
+    vec3 F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
 
     float w_diffuse = (1.0 - mat.metallic);
-    float w_specular = 1.0;
-    float w_clear = mat.clearcoat_thickness * 0.25;
+    float w_specular = mix(0.04, 1.0, mat.metallic);
+    float w_clearcoat = mat.clearcoat_thickness * 0.25;
 
-    float sum = w_diffuse + w_specular + w_clear;
+    float sum = w_diffuse + w_specular + w_clearcoat;
     w_diffuse /= sum;
     w_specular /= sum;
-    w_clear /= sum;
+    w_clearcoat /= sum;
+
+    {
+        float light_select_pdf;
+        uint index = sample_light(light_select_pdf);
+
+        uint base = light_triangles[index];
+
+        vec3 Lp, Ln, Le;
+        sample_light_point(base, Lp, Ln, Le);
+
+        vec3 L = Lp - rec.position;
+        float dist2 = dot(L, L);
+        float dist = sqrt(dist2);
+        L /= dist;
+
+        vec3 H = normalize(V + L);
+        float bsdf_pdf = pdf_bsdf(N, H, L, rec.material, w_diffuse, w_specular, w_clearcoat);
+
+        if (visible(rec.position, rec.normal, Lp)) {
+            float NoL = max(dot(N, L), 0.0);
+            if (NoL > EPSILON) {
+                float area = light_areas[index];
+                float light_pdf = pdf_light(light_select_pdf, area, Ln, L, dist2);
+
+                if (light_pdf > EPSILON) {
+                    vec3 F = fresnel_schlick(NoV, F0);
+                    vec3 kd = (1.0 - F) * (1.0 - mat.metallic);
+
+                    vec3 brdf = kd * mat.albedo / PI;
+
+                    float light_pdf_c = max(light_pdf, EPSILON);
+                    float bsdf_pdf_c = max(bsdf_pdf, EPSILON);
+
+                    float w = power_heuristic(light_pdf_c, bsdf_pdf_c);
+
+                    vec3 contrib = throughput * brdf * Le * NoL * w / light_pdf_c;
+                    radiance += contrib;
+                }
+            }
+        }
+    }
+
+    mat3 tbn = make_tbn(N);
 
     float r = random();
 
     vec3 L;
-    float pdf;
-    vec3 brdf;
-
-    vec3 F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
-
     if (r < w_specular) {
         vec2 xi = vec2(random(), random());
         vec3 H = normalize(tbn * sample_GGX(xi, max(0.001, mat.roughness)));
@@ -423,16 +575,16 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         float NoH = max(dot(N, H), 0.0);
         float VoH = max(dot(V, H), 0.0);
 
-        float D = D_GGX(NoH, mat.roughness * mat.roughness);
+        float D = D_GGX(NoH, mat.roughness);
         float G = G_Smith(NoV, NoL, mat.roughness);
         vec3 F = fresnel_schlick(VoH, F0);
 
-        brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
-        pdf = pdf_GGX(N, H, V, mat.roughness);
+        vec3 brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
+        float pdf = pdf_specular(N, H, V, mat.roughness);
 
         throughput *= brdf * NoL / (pdf * w_specular);
     }
-    else if (r < w_specular + w_clear) {
+    else if (r < w_specular + w_clearcoat) {
         vec2 xi = vec2(random(), random());
         vec3 H = normalize(tbn * sample_clearcoat(xi, mat.clearcoat_roughness));
         L = reflect(-V, H);
@@ -449,10 +601,10 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         float G = G_Clearcoat(NoV, NoL);
         vec3 F = vec3(0.04);
 
-        brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
-        pdf = (D * NoH) / max(4.0 * VoH, 1e-5);
+        vec3 brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
+        float pdf = (D * NoH) / max(4.0 * VoH, 1e-5);
 
-        throughput *= brdf * NoL / (pdf * w_clear);
+        throughput *= brdf * NoL / (pdf * w_clearcoat);
     }
     else {
         vec3 L_local = sample_cosine_hemisphere();
@@ -466,8 +618,8 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         vec3 F = fresnel_schlick(NoV, F0);
         vec3 kd = (1.0 - F) * (1.0 - mat.metallic);
 
-        brdf = kd * mat.albedo / PI;
-        pdf  = NoL / PI;
+        vec3 brdf = kd * mat.albedo / PI;
+        float pdf  = NoL / PI;
 
         if (mat.sheen > 0.0) {
             float NoH = max(dot(N, normalize(V + L)), 0.0);
@@ -537,11 +689,11 @@ void main() {
     ray.direction = direction;
 
     record_t rec;
-    for (uint bounce = 0u; bounce < 3u; ++bounce) {
+    for (uint bounce = 0u; bounce < 5u; ++bounce) {
 
         rec.t = 1e30;
 
-        if (!hit_bvh(ray, rec)) {
+        if (!hit_bvh(ray, false, rec)) {
             radiance += throughput * miss(ray);
             break;
         }

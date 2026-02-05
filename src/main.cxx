@@ -171,6 +171,7 @@ int main()
         .data = {
             .inv_view = inv_view,
             .origin = origin,
+            .total_light_area = bvh.total_light_area,
         },
         .accumulation = gl::Texture(GL_TEXTURE_2D),
     };
