@@ -22,7 +22,7 @@ box_t box_empty()
 
 std::uint32_t build_bvh_node(
     std::vector<bvh_node_t> &nodes,
-    std::vector<triangle_t> &tris,
+    std::vector<triangle_t> &triangles,
     const std::uint32_t begin,
     const std::uint32_t end)
 {
@@ -31,9 +31,9 @@ std::uint32_t build_bvh_node(
 
     for (auto i = begin; i < end; ++i)
     {
-        bounds = box_union(bounds, tris[i].bounds);
-        centroid_bounds.min = min(centroid_bounds.min, tris[i].centroid);
-        centroid_bounds.max = max(centroid_bounds.max, tris[i].centroid);
+        bounds = box_union(bounds, triangles[i].bounds);
+        centroid_bounds.min = min(centroid_bounds.min, triangles[i].centroid);
+        centroid_bounds.max = max(centroid_bounds.max, triangles[i].centroid);
     }
 
     const auto node_index = static_cast<std::uint32_t>(nodes.size());
@@ -58,16 +58,16 @@ std::uint32_t build_bvh_node(
     const auto mid = (begin + end) / 2;
 
     std::nth_element(
-        tris.begin() + begin,
-        tris.begin() + mid,
-        tris.begin() + end,
+        triangles.begin() + begin,
+        triangles.begin() + mid,
+        triangles.begin() + end,
         [axis](const triangle_t &a, const triangle_t &b)
         {
             return a.centroid[axis] < b.centroid[axis];
         });
 
-    const auto left = build_bvh_node(nodes, tris, begin, mid);
-    const auto right = build_bvh_node(nodes, tris, mid, end);
+    const auto left = build_bvh_node(nodes, triangles, begin, mid);
+    const auto right = build_bvh_node(nodes, triangles, mid, end);
 
     nodes[node_index] = {
         .box_min = bounds.min,
@@ -80,19 +80,23 @@ std::uint32_t build_bvh_node(
     return node_index;
 }
 
-void build_bvh(const object_t &obj, bvh_t &bvh)
+void build_bvh(const model_t &model, bvh_t &tree)
 {
-    std::vector<triangle_t> tris;
+    std::vector<triangle_t> triangles;
 
-    for (std::uint32_t i = 0; i < obj.indices.size(); i += 3)
+    tree.lights.clear();
+    tree.light_areas.clear();
+    tree.total_light_area = {};
+
+    for (std::uint32_t i = 0; i < model.indices.size(); i += 3)
     {
-        const auto i0 = obj.indices[i + 0];
-        const auto i1 = obj.indices[i + 1];
-        const auto i2 = obj.indices[i + 2];
+        const auto i0 = model.indices[i + 0];
+        const auto i1 = model.indices[i + 1];
+        const auto i2 = model.indices[i + 2];
 
-        auto &p0 = obj.vertices[i0].position;
-        auto &p1 = obj.vertices[i1].position;
-        auto &p2 = obj.vertices[i2].position;
+        auto &p0 = model.vertices[i0].position;
+        auto &p1 = model.vertices[i1].position;
+        auto &p2 = model.vertices[i2].position;
 
         const box_t bounds
         {
@@ -100,19 +104,31 @@ void build_bvh(const object_t &obj, bvh_t &bvh)
             .max = max(p0, max(p1, p2)),
         };
 
-        tris.push_back(
+        triangles.push_back(
             {
                 .index = i,
                 .bounds = bounds,
                 .centroid = (p0 + p1 + p2) / 3.0f,
             });
+
+        if (auto &material = model.materials[model.vertices[i0].material]; !material.is_emissive())
+            continue;
+
+        auto area = triangle_area(p0, p1, p2);
+        if (area <= 0.0f)
+            continue;
+
+        tree.lights.push_back(i);
+        tree.light_areas.push_back(area);
+
+        tree.total_light_area += area;
     }
 
-    bvh.nodes.clear();
-    bvh.nodes.reserve(tris.size() * 2);
-    build_bvh_node(bvh.nodes, tris, 0, tris.size());
+    tree.nodes.clear();
+    tree.nodes.reserve(triangles.size() * 2);
+    build_bvh_node(tree.nodes, triangles, 0, triangles.size());
 
-    bvh.map.resize(tris.size());
-    for (unsigned i = 0; i < tris.size(); ++i)
-        bvh.map[i] = tris[i].index;
+    tree.map.resize(triangles.size());
+    for (unsigned i = 0; i < triangles.size(); ++i)
+        tree.map[i] = triangles[i].index;
 }

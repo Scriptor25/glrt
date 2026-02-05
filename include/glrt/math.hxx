@@ -24,19 +24,6 @@ struct vec
         return e[i];
     }
 
-    [[nodiscard]] constexpr T length_squared() const
-    {
-        T t{};
-        for (unsigned i = 0; i < N; ++i)
-            t += e[i] * e[i];
-        return t;
-    }
-
-    [[nodiscard]] constexpr T length() const
-    {
-        return std::sqrt(length_squared());
-    }
-
     explicit constexpr operator vec<N - 1, T>() const
     {
         vec<N - 1, T> v;
@@ -149,9 +136,24 @@ constexpr vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
 }
 
 template<unsigned N, typename T>
+constexpr T length_squared(const vec<N, T> &v)
+{
+    T t{};
+    for (unsigned i = 0; i < N; ++i)
+        t += v[i] * v[i];
+    return t;
+}
+
+template<unsigned N, typename T>
+constexpr T length(const vec<N, T> &v)
+{
+    return std::sqrt(length_squared(v));
+}
+
+template<unsigned N, typename T>
 constexpr vec<N, T> normalize(const vec<N, T> &v)
 {
-    return v / v.length();
+    return v / length(v);
 }
 
 template<unsigned N, typename T>

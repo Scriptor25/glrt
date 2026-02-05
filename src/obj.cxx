@@ -1,7 +1,10 @@
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+#include <glrt/model.hxx>
 #include <glrt/obj.hxx>
+#include <glrt/types.hxx>
 
 static std::vector<std::string_view> split(const std::string_view line, const std::string_view str)
 {
@@ -28,14 +31,19 @@ static T from_string(const std::string_view str)
     return value;
 }
 
-void object_t::clear()
+bool material_t::is_emissive() const
+{
+    return dot(emission, emission) > 0.0f;
+}
+
+void model_t::clear()
 {
     indices.clear();
     vertices.clear();
     materials.clear();
 }
 
-object_t &object_t::operator+=(const object_t &other)
+model_t &model_t::operator+=(const model_t &other)
 {
     const auto vertex_count = vertices.size();
     const auto material_count = materials.size();
@@ -54,7 +62,7 @@ object_t &object_t::operator+=(const object_t &other)
     return *this;
 }
 
-object_t operator*(const mat4f &lhs, const object_t &rhs)
+model_t operator*(const mat4f &lhs, const model_t &rhs)
 {
     std::vector<vertex_t> vertices;
 
@@ -76,7 +84,7 @@ object_t operator*(const mat4f &lhs, const object_t &rhs)
     };
 }
 
-void read_obj(const std::filesystem::path &path, object_t &object)
+void read_obj(const std::filesystem::path &path, model_t &model)
 {
     std::vector<vec3f> vertex_positions;
     std::vector<vec3f> vertex_normals;
@@ -104,26 +112,26 @@ void read_obj(const std::filesystem::path &path, object_t &object)
             if (libpath.is_relative())
                 libpath = path.parent_path() / libpath;
 
-            read_mtl(libpath, object);
+            read_mtl(libpath, model);
             continue;
         }
 
         if (parts.front() == "usemtl")
         {
             auto name = parts.at(1);
-            material_index = object.material_map[std::string(name)];
+            material_index = model.material_map[std::string(name)];
             continue;
         }
 
         if (parts.front() == "f")
         {
-            const auto first_index = object.vertices.size();
+            const auto first_index = model.vertices.size();
 
             for (std::size_t i = 1; i < parts.size(); ++i)
             {
                 auto segments = split(parts[i], "/");
 
-                auto &vertex = object.vertices.emplace_back();
+                auto &vertex = model.vertices.emplace_back();
                 vertex.material = material_index;
 
                 std::int32_t index;
@@ -183,9 +191,9 @@ void read_obj(const std::filesystem::path &path, object_t &object)
 
             for (std::size_t i = 1; i + 1 < vertex_count; ++i)
             {
-                object.indices.push_back(first_index);
-                object.indices.push_back(first_index + i);
-                object.indices.push_back(first_index + i + 1);
+                model.indices.push_back(first_index);
+                model.indices.push_back(first_index + i);
+                model.indices.push_back(first_index + i + 1);
             }
 
             continue;
@@ -224,7 +232,7 @@ void read_obj(const std::filesystem::path &path, object_t &object)
     }
 }
 
-void read_mtl(const std::filesystem::path &path, object_t &object)
+void read_mtl(const std::filesystem::path &path, model_t &model)
 {
     std::ifstream stream(path);
     if (!stream)
@@ -244,8 +252,8 @@ void read_mtl(const std::filesystem::path &path, object_t &object)
         if (parts.front() == "newmtl")
         {
             auto name = parts.at(1);
-            object.material_map.emplace(name, object.materials.size());
-            material = &object.materials.emplace_back();
+            model.material_map.emplace(name, model.materials.size());
+            material = &model.materials.emplace_back();
             continue;
         }
 

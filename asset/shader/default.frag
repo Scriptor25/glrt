@@ -49,41 +49,60 @@ layout (location = 0) in vec2 uv;
 
 layout (location = 0) out vec4 color;
 
-layout (row_major, binding = 0) uniform camera_buffer {
+ layout (row_major, binding = 0) uniform data_buffer {
     mat4 inv_view;
     mat4 inv_proj;
     vec3 origin;
     uint frame;
-} camera;
+    float total_light_area;
+} data;
 
-layout(rgba32f, binding = 0) uniform image2D accumulation;
+layout (rgba32f, binding = 0) uniform image2D accumulation;
 
 layout (std430, binding = 1) buffer index_buffer {
     uint indices[];
 };
+
 layout (std430, binding = 2) buffer vertex_buffer {
     vertex_t vertices[];
 };
+
 layout (std430, binding = 3) buffer material_buffer {
     material_t materials[];
 };
+
 layout (std430, binding = 4) buffer node_buffer {
     bvh_node_t nodes[];
 };
+
 layout (std430, binding = 5) buffer map_buffer {
     uint bvh_map[];
 };
 
+layout (std430, binding = 6) buffer light_buffer {
+    uint light_triangles[];
+};
+
+layout (std430, binding = 7) buffer light_area_buffer {
+    float light_areas[];
+};
+
+/* constant */
+
 const float EPSILON = 1e-4;
 const float PI = 3.14159265359;
+
+/* ray */
 
 vec3 ray_at(in ray_t self, in float t) {
     return self.origin + self.direction * t;
 }
 
+/* random */
+
 uint seed = 0u;
 
-uint hash(uint x) {
+uint hash(in uint x) {
     x ^= x >> 16;
     x *= 0x7feb352d;
     x ^= x >> 15;
@@ -92,118 +111,28 @@ uint hash(uint x) {
     return x;
 }
 
-float rand() {
+float random() {
     seed = hash(seed);
     return float(seed) / float(0xffffffffu);
 }
 
 vec3 random_unit_vector() {
-    float z = rand() * 2.0 - 1.0;
-    float a = rand() * 2.0 * PI;
+    float z = random() * 2.0 - 1.0;
+    float a = random() * 2.0 * PI;
     float r = sqrt(max(0.0, 1.0 - z * z));
     return vec3(r * cos(a), r * sin(a), z);
 }
 
-mat3 make_tbn(vec3 n) {
+mat3 make_tbn(in vec3 n) {
     vec3 t = normalize(abs(n.z) < 0.999
-        ? cross(n, vec3(0, 0, 1))
-        : cross(n, vec3(0, 1, 0)));
+                    ? cross(n, vec3(0, 0, 1))
+                    : cross(n, vec3(0, 1, 0)));
 
     vec3 b = cross(n, t);
     return mat3(t, b, n);
 }
 
-vec3 fresnel_schlick(float cos_theta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
-}
-
-vec3 fresnel_sheen(float cos_theta, vec3 sheen_color) {
-    return sheen_color + (1.0 - sheen_color) * pow(1.0 - cos_theta, 5.0);
-}
-
-float D_GGX(float NoH, float alpha) {
-    float a2 = alpha * alpha;
-    float d = NoH * NoH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
-}
-
-float D_GGX_Clearcoat(float NoH, float roughness) {
-    float a = mix(0.001, 0.1, roughness);
-    float a2 = a * a;
-    float d = NoH * NoH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
-}
-
-float D_Charlie(float NoH, float roughness) {
-    float alpha = max(roughness * roughness, 0.001);
-    float inv_alpha = 1.0 / alpha;
-    float sin2 = max(1.0 - NoH * NoH, 0.0);
-    return (2.0 + inv_alpha) * pow(sin2, inv_alpha * 0.5) / (2.0 * PI);
-}
-
-float G_SchlickGGX(float NoV, float k) {
-    return NoV / (NoV * (1.0 - k) + k);
-}
-
-float G_Smith(float NoV, float NoL, float roughness) {
-    float k = (roughness + 1.0);
-    k = (k * k) / 8.0;
-    return G_SchlickGGX(NoV, k) * G_SchlickGGX(NoL, k);
-}
-
-float G_Clearcoat(float NoV, float NoL) {
-    return G_SchlickGGX(NoV, 0.25) * G_SchlickGGX(NoL, 0.25);
-}
-
-vec3 sample_GGX(vec2 xi, float roughness) {
-    float a = roughness * roughness;
-
-    float phi = 2.0 * PI * xi.x;
-    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
-    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-
-    return vec3(
-        sin_theta * cos(phi),
-        sin_theta * sin(phi),
-        cos_theta
-    );
-}
-
-vec3 sample_clearcoat(vec2 xi, float roughness) {
-    float a = mix(0.001, 0.1, roughness);
-
-    float phi = 2.0 * PI * xi.x;
-    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
-    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-
-    return vec3(
-        sin_theta * cos(phi),
-        sin_theta * sin(phi),
-        cos_theta
-    );
-}
-
-float pdf_GGX(vec3 N, vec3 H, vec3 V, float roughness) {
-    float NoH = max(dot(N, H), 0.0);
-    float VoH = max(dot(V, H), 0.0);
-
-    float D = D_GGX(NoH, roughness * roughness);
-    return (D * NoH) / (4.0 * VoH + 1e-5);
-}
-
-vec3 sample_cosine_hemisphere() {
-    float u1 = rand();
-    float u2 = rand();
-
-    float r = sqrt(u1);
-    float phi = 2.0 * PI * u2;
-
-    return vec3(
-        r * cos(phi),
-        r * sin(phi),
-        sqrt(1.0 - u1)
-    );
-}
+/* hit */
 
 bool hit_box(in ray_t ray, in vec3 box_min, in vec3 box_max, in float t_max) {
 
@@ -216,7 +145,7 @@ bool hit_box(in ray_t ray, in vec3 box_min, in vec3 box_max, in float t_max) {
     vec3 t_max_v = max(t0, t1);
 
     float t_enter = max(max(t_min_v.x, t_min_v.y), t_min_v.z);
-    float t_exit  = min(min(t_max_v.x, t_max_v.y), t_max_v.z);
+    float t_exit = min(min(t_max_v.x, t_max_v.y), t_max_v.z);
 
     return t_exit >= max(t_enter, 0.0) && t_enter < t_max;
 }
@@ -338,13 +267,168 @@ bool hit_bvh(in ray_t ray, inout record_t rec) {
     return hit_anything;
 }
 
+/* fresnel */
+
+vec3 fresnel_schlick(in float cos_theta, in vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+vec3 fresnel_sheen(in float cos_theta, in vec3 sheen_color) {
+    return sheen_color + (1.0 - sheen_color) * pow(1.0 - cos_theta, 5.0);
+}
+
+/* D (distribution) */
+
+float D_GGX(in float NoH, in float alpha) {
+    float a2 = alpha * alpha;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float D_GGX_Clearcoat(in float NoH, in float roughness) {
+    float a = mix(0.001, 0.1, roughness);
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float D_Charlie(in float NoH, in float roughness) {
+    float alpha = max(roughness * roughness, 0.001);
+    float inv_alpha = 1.0 / alpha;
+    float sin2 = max(1.0 - NoH * NoH, 0.0);
+    return (2.0 + inv_alpha) * pow(sin2, inv_alpha * 0.5) / (2.0 * PI);
+}
+
+/* G */
+
+float G_SchlickGGX(in float NoV, in float k) {
+    return NoV / (NoV * (1.0 - k) + k);
+}
+
+float G_Smith(in float NoV, in float NoL, in float roughness) {
+    float k = (roughness + 1.0);
+    k = (k * k) / 8.0;
+    return G_SchlickGGX(NoV, k) * G_SchlickGGX(NoL, k);
+}
+
+float G_Clearcoat(in float NoV, in float NoL) {
+    return G_SchlickGGX(NoV, 0.25) * G_SchlickGGX(NoL, 0.25);
+}
+
+/* sample */
+
+vec3 sample_GGX(in vec2 xi, in float roughness) {
+    float a = roughness * roughness;
+
+    float phi = 2.0 * PI * xi.x;
+    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+    return vec3(
+        sin_theta * cos(phi),
+        sin_theta * sin(phi),
+        cos_theta
+    );
+}
+
+vec3 sample_clearcoat(in vec2 xi, in float roughness) {
+    float a = mix(0.001, 0.1, roughness);
+
+    float phi = 2.0 * PI * xi.x;
+    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+    return vec3(
+        sin_theta * cos(phi),
+        sin_theta * sin(phi),
+        cos_theta
+    );
+}
+
+vec3 sample_cosine_hemisphere() {
+    float u1 = random();
+    float u2 = random();
+
+    float r = sqrt(u1);
+    float phi = 2.0 * PI * u2;
+
+    return vec3(
+        r * cos(phi),
+        r * sin(phi),
+        sqrt(1.0 - u1)
+    );
+}
+
+vec3 sample_triangle(in vec3 p0, in vec3 p1, in vec3 p2, in float u1, in float u2) {
+    float su1 = sqrt(u1);
+    return
+    (1.0 - su1) * p0 +
+    su1 * (1.0 - u2) * p1 +
+    su1 * u2 * p2;
+}
+
+bool sample_light_direction(in record_t rec, out vec3 L, out float pdf_light) {
+    uint light_count = light_triangles.length();
+    if (light_count == 0)
+        return false;
+
+    uint idx = min(uint(random() * light_count), light_count - 1u);
+    uint tri = light_triangles[idx];
+
+    uint i0 = indices[tri + 0];
+    uint i1 = indices[tri + 1];
+    uint i2 = indices[tri + 2];
+
+    vec3 p0 = vertices[i0].position;
+    vec3 p1 = vertices[i1].position;
+    vec3 p2 = vertices[i2].position;
+
+    vec3 light_pos = sample_triangle(p0, p1, p2, random(), random());
+
+    vec3 toL = light_pos - rec.position;
+    float dist2 = dot(toL, toL);
+    float dist = sqrt(dist2);
+    toL /= dist;
+
+    float NoL = max(dot(rec.normal, toL), 0.0);
+    if (NoL <= 0.0)
+        return false;
+
+    vec3 light_n = normalize(cross(p1 - p0, p2 - p0));
+    float LoN = max(dot(-toL, light_n), 0.0);
+    if (LoN <= 0.0)
+        return false;
+
+    // area -> solid angle PDF
+    pdf_light = dist2 / (LoN * light_areas[idx]) * (1.0 / float(light_count));
+
+    L = toL;
+    return true;
+}
+
+/* pdf */
+
+float pdf_GGX(in vec3 N, in vec3 H, in vec3 V, in float roughness) {
+    float NoH = max(dot(N, H), 0.0);
+    float VoH = max(dot(V, H), 0.0);
+    if (NoH <= 0.0 || VoH <= 0.0)
+        return 0.0;
+
+    float a = roughness * roughness;
+    float D = D_GGX(NoH, a);
+
+    return (D * NoH) / max(4.0 * VoH, 1e-6);
+}
+
+/* scatter */
+
 bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3 radiance) {
     if (rec.material >= materials.length())
         return false;
 
     material_t mat = materials[rec.material];
 
-    if (length(mat.emission) > 0.0) {
+    if (dot(mat.emission, mat.emission) > 0.0) {
         radiance += throughput * mat.emission;
         return false;
     }
@@ -352,20 +436,21 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
     vec3 N = rec.normal;
     vec3 V = normalize(-ray.direction);
     float NoV = max(dot(N, V), 0.0);
-    if (NoV <= 0.0) return false;
+    if (NoV <= 0.0)
+        return false;
 
     mat3 tbn = make_tbn(N);
 
-    float w_diffuse  = (1.0 - mat.metallic);
+    float w_diffuse = (1.0 - mat.metallic);
     float w_specular = 1.0;
-    float w_clear    = mat.clearcoat_thickness * 0.25;
+    float w_clear = mat.clearcoat_thickness * 0.25;
 
     float sum = w_diffuse + w_specular + w_clear;
-    w_diffuse  /= sum;
+    w_diffuse /= sum;
     w_specular /= sum;
-    w_clear    /= sum;
+    w_clear /= sum;
 
-    float r = rand();
+    float r = random();
 
     vec3 L;
     float pdf;
@@ -374,7 +459,7 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
     vec3 F0 = mix(vec3(0.04), mat.albedo, mat.metallic);
 
     if (r < w_specular) {
-        vec2 xi = vec2(rand(), rand());
+        vec2 xi = vec2(random(), random());
         vec3 H = normalize(tbn * sample_GGX(xi, max(0.001, mat.roughness)));
         L = reflect(-V, H);
 
@@ -386,15 +471,15 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
 
         float D = D_GGX(NoH, mat.roughness * mat.roughness);
         float G = G_Smith(NoV, NoL, mat.roughness);
-        vec3  F = fresnel_schlick(VoH, F0);
+        vec3 F = fresnel_schlick(VoH, F0);
 
         brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
-        pdf  = pdf_GGX(N, H, V, mat.roughness);
+        pdf = pdf_GGX(N, H, V, mat.roughness);
 
         throughput *= brdf * NoL / (pdf * w_specular);
     }
     else if (r < w_specular + w_clear) {
-        vec2 xi = vec2(rand(), rand());
+        vec2 xi = vec2(random(), random());
         vec3 H = normalize(tbn * sample_clearcoat(xi, mat.clearcoat_roughness));
         L = reflect(-V, H);
 
@@ -406,10 +491,10 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
 
         float D = D_GGX_Clearcoat(NoH, mat.clearcoat_roughness);
         float G = G_Clearcoat(NoV, NoL);
-        vec3  F = vec3(0.04);
+        vec3 F = vec3(0.04);
 
         brdf = (D * G * F) / max(4.0 * NoV * NoL, 1e-5);
-        pdf  = (D * NoH) / max(4.0 * VoH, 1e-5);
+        pdf = (D * NoH) / max(4.0 * VoH, 1e-5);
 
         throughput *= brdf * NoL / (pdf * w_clear);
     }
@@ -418,7 +503,8 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         L = normalize(tbn * L_local);
 
         float NoL = max(dot(N, L), 0.0);
-        if (NoL <= 0.0) return false;
+        if (NoL <= 0.0)
+            return false;
 
         vec3 F = fresnel_schlick(NoV, F0);
         vec3 kd = (1.0 - F) * (1.0 - mat.metallic);
@@ -429,14 +515,14 @@ bool scatter(inout ray_t ray, in record_t rec, inout vec3 throughput, inout vec3
         if (mat.sheen > 0.0) {
             float NoH = max(dot(N, normalize(V + L)), 0.0);
             float D = D_Charlie(NoH, mat.roughness);
-            vec3  Fs = fresnel_sheen(NoV, mat.albedo);
+            vec3 Fs = fresnel_sheen(NoV, mat.albedo);
             brdf += mat.sheen * D * Fs;
         }
 
         throughput *= brdf * NoL / (pdf * w_diffuse);
     }
 
-    ray.origin    = rec.position + N * EPSILON;
+    ray.origin = rec.position + N * EPSILON;
     ray.direction = normalize(L);
 
     return true;
@@ -466,32 +552,29 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec4 samples = imageLoad(accumulation, pixel);
 
-    if (camera.frame >= 2000) {
+    if (data.frame >= 2000) {
         color = samples / 2000;
         return;
     }
 
-    seed =
-        uint(pixel.x) * 1973u ^
-        uint(pixel.y) * 9277u ^
-        camera.frame * 26699u;
+    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ data.frame * 26699u;
 
-    vec3 radiance   = vec3(0.0);
+    vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
 
-    vec2 delta = 1.0 / imageSize(accumulation);
-    vec2 offset = vec2(delta.x * rand(), delta.y * rand());
+    vec2 delta = 1.0 / vec2(imageSize(accumulation));
+    vec2 offset = vec2(delta.x * random(), delta.y * random());
 
     vec2 ndc = (uv + offset) * 2.0 - 1.0;
 
     vec4 clip = vec4(ndc, -1.0, 1.0);
-    vec4 view = camera.inv_proj * clip;
+    vec4 view = data.inv_proj * clip;
     view /= view.w;
 
-    vec3 direction = normalize((camera.inv_view * vec4(view.xyz, 0.0)).xyz);
+    vec3 direction = normalize((data.inv_view * vec4(view.xyz, 0.0)).xyz);
 
     ray_t ray;
-    ray.origin    = camera.origin;
+    ray.origin = data.origin;
     ray.direction = direction;
 
     record_t rec;
@@ -512,5 +595,5 @@ void main() {
     samples = vec4(samples.rgb + radiance, 1.0);
     imageStore(accumulation, pixel, samples);
 
-    color = vec4(samples.rgb / (float(camera.frame) + 1.0), 1.0);
+    color = vec4(samples.rgb / (float(data.frame) + 1.0), 1.0);
 }

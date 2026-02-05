@@ -11,37 +11,40 @@
 #include <glrt/obj.hxx>
 #include <glrt/window.hxx>
 
-struct camera_t
+struct uniform_data_t
 {
     mat4f inv_view;
     mat4f inv_proj;
     vec3f origin;
     std::uint32_t frame{};
+    float total_light_area{};
 };
 
 struct context_t
 {
-    camera_t camera;
+    uniform_data_t data;
 
     gl::VertexArray vertex_array;
     gl::Texture accumulation;
 
-    gl::Buffer camera_buffer;
+    gl::Buffer data_buffer;
     gl::Buffer index_buffer;
     gl::Buffer vertex_buffer;
     gl::Buffer material_buffer;
     gl::Buffer node_buffer;
     gl::Buffer map_buffer;
+    gl::Buffer light_buffer;
+    gl::Buffer light_area_buffer;
 };
 
 static void framebuffer_size_callback(GLFWwindow *window, const int width, const int height)
 {
     const auto context = static_cast<context_t *>(glfwGetWindowUserPointer(window));
 
-    context->camera.frame = {};
+    context->data.frame = {};
 
     const auto proj = perspective(45.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
-    context->camera.inv_proj = inverse(proj);
+    context->data.inv_proj = inverse(proj);
 
     context->accumulation.Recreate(GL_TEXTURE_2D);
     context->accumulation.Storage2D(1, GL_RGBA32F, width, height);
@@ -99,49 +102,49 @@ static int load_shader(const std::filesystem::path &path, const GLenum type, con
     return 0;
 }
 
-static void generate_scene(object_t &data)
+static void generate_scene(model_t &data)
 {
     {
-        object_t cornell;
+        model_t cornell;
         read_obj("asset/cornell.obj", cornell);
         data += scale(4.0f, 4.0f, 4.0f) * cornell;
     }
 
     {
-        object_t teapot;
+        model_t teapot;
         read_obj("asset/teapot.obj", teapot);
         data += translation(0.0f, -4.0f, 0.0f) * teapot;
     }
 }
 
-static void generate_scene1(object_t &data)
+static void generate_scene1(model_t &data)
 {
     {
-        object_t plane;
+        model_t plane;
         read_obj("asset/plane.obj", plane);
         data += scale(10.0f, 1.0f, 10.0f) * translation(-0.5f, 0.0f, -0.5f) * plane;
     }
 
     {
-        object_t cube;
+        model_t cube;
         read_obj("asset/cube.obj", cube);
         data += translation(-1.0f, 0.01f, 2.3f) * cube;
     }
 
     {
-        object_t cube;
+        model_t cube;
         read_obj("asset/cube.obj", cube);
         data += translation(2.9f, 0.01f, 2.6f) * cube;
     }
 
     {
-        object_t cube;
+        model_t cube;
         read_obj("asset/cube.obj", cube);
         data += translation(2.6f, 0.01f, -1.2f) * cube;
     }
 
     {
-        object_t teapot;
+        model_t teapot;
         read_obj("asset/teapot.obj", teapot);
         data += translation(0.0f, 0.01f, 0.0f) * teapot;
     }
@@ -155,7 +158,7 @@ int main()
     constexpr auto view = lookAt(origin, target, { 0.0f, 1.0f, 0.0f });
     constexpr auto inv_view = inverse(view);
 
-    object_t data;
+    model_t data;
     generate_scene(data);
 
     bvh_t bvh;
@@ -165,7 +168,7 @@ int main()
 
     context_t context
     {
-        .camera = {
+        .data = {
             .inv_view = inv_view,
             .origin = origin,
         },
@@ -181,13 +184,15 @@ int main()
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    context.camera_buffer.Bind(GL_UNIFORM_BUFFER, 0);
+    context.data_buffer.Bind(GL_UNIFORM_BUFFER, 0);
 
     context.index_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 1);
     context.vertex_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 2);
     context.material_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 3);
     context.node_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 4);
     context.map_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 5);
+    context.light_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 6);
+    context.light_area_buffer.Bind(GL_SHADER_STORAGE_BUFFER, 7);
 
     context.index_buffer.Data(
         data.indices.data(),
@@ -209,13 +214,21 @@ int main()
         bvh.map.data(),
         bvh.map.size() * sizeof(std::uint32_t),
         GL_STATIC_DRAW);
+    context.light_buffer.Data(
+        bvh.lights.data(),
+        bvh.lights.size() * sizeof(std::uint32_t),
+        GL_STATIC_DRAW);
+    context.light_area_buffer.Data(
+        bvh.light_areas.data(),
+        bvh.light_areas.size() * sizeof(std::uint32_t),
+        GL_STATIC_DRAW);
 
     const auto program = glCreateProgram();
 
-    if (const auto error = load_shader("asset/default.vert", GL_VERTEX_SHADER, program))
+    if (const auto error = load_shader("asset/shader/default.vert", GL_VERTEX_SHADER, program))
         return error;
 
-    if (const auto error = load_shader("asset/default.frag", GL_FRAGMENT_SHADER, program))
+    if (const auto error = load_shader("asset/shader/default.frag", GL_FRAGMENT_SHADER, program))
         return error;
 
     glLinkProgram(program);
@@ -231,12 +244,12 @@ int main()
     {
         glfwPollEvents();
 
-        context.camera_buffer.Data(
-            &context.camera,
-            sizeof(camera_t),
+        context.data_buffer.Data(
+            &context.data,
+            sizeof(uniform_data_t),
             GL_STATIC_DRAW);
 
-        context.camera.frame++;
+        context.data.frame++;
 
         glEnable(GL_DEPTH_TEST);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
