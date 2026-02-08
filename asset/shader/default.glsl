@@ -1,6 +1,6 @@
 #version 450 core
 
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 struct ray_t {
     vec3 origin;
@@ -54,10 +54,10 @@ layout (row_major, binding = 0) uniform data_buffer {
     float total_light_area;
     uvec3 extent;
     uint frame;
+    uvec2 tile_extent;
 } data;
 
-layout (rgba32f, binding = 0) uniform image2D accumulation;
-layout (rgba32f, binding = 1) uniform image2D framebuffer;
+layout (rgba32f, binding = 0) uniform image2D sample_buffer;
 
 layout (std430, binding = 1) buffer index_buffer {
     uint indices[];
@@ -654,21 +654,33 @@ vec3 miss(in ray_t ray) {
 }
 
 void main() {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    uvec2 local_pixel = gl_GlobalInvocationID.xy;
+
+    uvec2 tile_count = (data.extent.xy + data.tile_extent - 1u) / data.tile_extent;
+    uint total_tile_count = tile_count.x * tile_count.y;
+
+    uint tile_index = data.frame % total_tile_count;
+    uint sample_index = data.frame / total_tile_count;
+
+    uvec2 tile = uvec2(tile_index % tile_count.x, tile_index / tile_count.y);
+    uvec2 tile_origin = tile * data.tile_extent;
+    uvec2 pixel = tile_origin + local_pixel;
 
     if (pixel.x >= data.extent.x || pixel.y >= data.extent.y) {
         return;
     }
 
-    if (data.frame >= data.extent.z) {
+    uint max_samples = data.extent.z;
+    uint max_samples_root = uint(sqrt(max_samples));
+    float inv_max_samples_root = 1.0 / float(max_samples_root);
+
+    if (sample_index >= max_samples) {
         return;
     }
 
-    uint max_samples_root = uint(sqrt(data.extent.z));
-    float inv_max_samples_root = 1.0 / float(max_samples_root);
-    vec2 grid_sample = (vec2(data.frame % max_samples_root, data.frame / max_samples_root) + vec2(random(), random())) * inv_max_samples_root - 0.5;
+    vec2 grid_sample = (vec2(sample_index % max_samples_root, sample_index / max_samples_root) + vec2(random(), random())) * inv_max_samples_root - 0.5;
 
-    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ data.frame * 26699u;
+    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ sample_index * 26699u;
 
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
@@ -704,7 +716,7 @@ void main() {
         }
     }
 
-    vec3 samples = imageLoad(accumulation, pixel).rgb;
+    vec3 samples = imageLoad(sample_buffer, ivec2(pixel)).rgb;
     samples += radiance;
-    imageStore(accumulation, pixel, vec4(samples, 1.0));
+    imageStore(sample_buffer, ivec2(pixel), vec4(samples, 1.0));
 }

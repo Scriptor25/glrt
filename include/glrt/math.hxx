@@ -120,6 +120,15 @@ constexpr vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
+constexpr vec<N, T> operator-(const vec<N, T> &lhs, const T &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] - rhs;
+    return v;
+}
+
+template<unsigned N, typename T>
 constexpr vec<N, T> operator*(const vec<N, T> &lhs, const T &rhs)
 {
     vec<N, T> v;
@@ -138,9 +147,30 @@ constexpr vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
+constexpr vec<N, T> operator/(const vec<N, T> &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] / rhs[i];
+    return v;
+}
+
+template<unsigned N, typename T>
 constexpr vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
 {
-    return lhs * (T{ 1 } / rhs);
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] / rhs;
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr vec<N, T> operator/(const T &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs / rhs[i];
+    return v;
 }
 
 template<unsigned N, typename T>

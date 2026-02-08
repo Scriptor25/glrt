@@ -19,6 +19,7 @@ struct uniform_data_t
     float total_light_area{};
     vec3u extent;
     std::uint32_t frame{};
+    vec2u tile_extent;
 };
 
 struct context_t
@@ -45,7 +46,7 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width, const
     context->data.extent = {
         static_cast<std::uint32_t>(width),
         static_cast<std::uint32_t>(height),
-        2500u,
+        100u,
     };
     context->data.frame = {};
 
@@ -216,6 +217,7 @@ int main()
             .inv_view = inv_view,
             .origin = origin,
             .total_light_area = bvh.total_light_area,
+            .tile_extent = { 256u, 256u },
         },
         .accumulation = gl::Texture(GL_TEXTURE_2D),
     };
@@ -302,17 +304,32 @@ int main()
 
         window.GetFramebufferSize(width, height);
 
+        glUseProgram(compute_program);
+
         context.data_buffer.Data(
             &context.data,
             sizeof(uniform_data_t),
             GL_STATIC_DRAW);
 
+        auto tile_count = (vec2u(context.data.extent) + context.data.tile_extent - 1u) / context.data.tile_extent;
+        auto total_tile_count = tile_count[0] * tile_count[1];
+        auto sample_index = context.data.frame / total_tile_count;
+
         context.data.frame++;
 
-        glClear(GL_COLOR_BUFFER_BIT);
+        if (sample_index < context.data.extent[2])
+        {
+            glDispatchCompute(
+                (context.data.tile_extent[0] + 7) / 8,
+                (context.data.tile_extent[1] + 7) / 8,
+                1);
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        }
 
         context.vertex_array.Bind();
         glUseProgram(program);
+
+        glClear(GL_COLOR_BUFFER_BIT);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
         window.SwapBuffers();

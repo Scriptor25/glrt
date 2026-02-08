@@ -29,7 +29,7 @@ Window::Window()
         nullptr);
 
     glfwMakeContextCurrent(m_Handle);
-    glfwSwapInterval(1);
+    glfwSwapInterval(0);
 
     glewInit();
 }
