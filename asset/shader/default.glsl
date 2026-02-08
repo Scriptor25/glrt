@@ -1,5 +1,7 @@
 #version 450 core
 
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
 struct ray_t {
     vec3 origin;
     vec3 direction;
@@ -45,10 +47,6 @@ struct bvh_node_t {
     uint end;
 };
 
-layout (location = 0) in vec2 uv;
-
-layout (location = 0) out vec4 color;
-
 layout (row_major, binding = 0) uniform data_buffer {
     mat4 inv_view;
     mat4 inv_proj;
@@ -59,6 +57,7 @@ layout (row_major, binding = 0) uniform data_buffer {
 } data;
 
 layout (rgba32f, binding = 0) uniform image2D accumulation;
+layout (rgba32f, binding = 1) uniform image2D framebuffer;
 
 layout (std430, binding = 1) buffer index_buffer {
     uint indices[];
@@ -92,9 +91,6 @@ layout (std430, binding = 7) buffer light_area_buffer {
 
 const float EPSILON = 1e-5;
 const float PI = 3.14159265359;
-
-const uint TILE_W = 100u;
-const uint TILE_H = 100u;
 
 /* ray */
 
@@ -658,37 +654,21 @@ vec3 miss(in ray_t ray) {
 }
 
 void main() {
-    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 
-    vec3 samples = imageLoad(accumulation, pixel).rgb;
-
-    ivec2 tiles = (ivec2(data.extent.xy) + ivec2(TILE_W - 1, TILE_H - 1)) / ivec2(TILE_W, TILE_H);
-
-    uint tile_count = tiles.x * tiles.y;
-    uint tile_index = data.frame % tile_count;
-    uint sample_index = data.frame / tile_count;
-    ivec2 tile = ivec2(tile_index % tiles.x, tile_index / tiles.x);
-
-    ivec2 tile_min = tile * ivec2(TILE_W, TILE_H);
-    ivec2 tile_max = tile_min + ivec2(TILE_W, TILE_H);
-
-    if (pixel.x < tile_min.x || pixel.y < tile_min.y || pixel.x >= tile_max.x || pixel.y >= tile_max.y) {
-        color = vec4(sqrt(samples / (float(sample_index) + 1.0)), 1.0);
+    if (pixel.x >= data.extent.x || pixel.y >= data.extent.y) {
         return;
     }
 
-    uint max_samples = data.extent.z;
-    uint max_samples_root = uint(sqrt(max_samples));
+    if (data.frame >= data.extent.z) {
+        return;
+    }
+
+    uint max_samples_root = uint(sqrt(data.extent.z));
     float inv_max_samples_root = 1.0 / float(max_samples_root);
+    vec2 grid_sample = (vec2(data.frame % max_samples_root, data.frame / max_samples_root) + vec2(random(), random())) * inv_max_samples_root - 0.5;
 
-    if (sample_index >= max_samples) {
-        color = vec4(sqrt(samples / (float(max_samples) + 1.0)), 1.0);
-        return;
-    }
-
-    vec2 grid_sample = (vec2(sample_index % max_samples_root, sample_index / max_samples_root) + vec2(random(), random())) * inv_max_samples_root - 0.5;
-
-    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ sample_index * 26699u;
+    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ data.frame * 26699u;
 
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
@@ -696,6 +676,7 @@ void main() {
     vec2 pixel_delta = 1.0 / vec2(data.extent.xy);
     vec2 offset = vec2(pixel_delta.x * grid_sample.x, pixel_delta.y * grid_sample.y);
 
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(data.extent.xy);
     vec2 ndc = (uv + offset) * 2.0 - 1.0;
 
     vec4 clip = vec4(ndc, -1.0, 1.0);
@@ -723,8 +704,7 @@ void main() {
         }
     }
 
+    vec3 samples = imageLoad(accumulation, pixel).rgb;
     samples += radiance;
     imageStore(accumulation, pixel, vec4(samples, 1.0));
-
-    color = vec4(sqrt(samples / (float(sample_index) + 1.0)), 1.0);
 }

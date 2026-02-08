@@ -60,6 +60,14 @@ struct mat
     vec<M, T> e[N]{};
 };
 
+using vec2i = vec<2, std::int32_t>;
+using vec3i = vec<3, std::int32_t>;
+using vec4i = vec<4, std::int32_t>;
+
+using vec2u = vec<2, std::uint32_t>;
+using vec3u = vec<3, std::uint32_t>;
+using vec4u = vec<4, std::uint32_t>;
+
 using vec2f = vec<2, float>;
 using vec3f = vec<3, float>;
 using vec4f = vec<4, float>;

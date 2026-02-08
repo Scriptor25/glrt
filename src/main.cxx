@@ -16,8 +16,9 @@ struct uniform_data_t
     mat4f inv_view;
     mat4f inv_proj;
     vec3f origin;
-    std::uint32_t frame{};
     float total_light_area{};
+    vec3u extent;
+    std::uint32_t frame{};
 };
 
 struct context_t
@@ -41,6 +42,11 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width, const
 {
     const auto context = static_cast<context_t *>(glfwGetWindowUserPointer(window));
 
+    context->data.extent = {
+        static_cast<std::uint32_t>(width),
+        static_cast<std::uint32_t>(height),
+        2500u,
+    };
     context->data.frame = {};
 
     const auto proj = perspective(45.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
@@ -67,7 +73,7 @@ static void debug_callback(
     std::cerr << message << std::endl;
 }
 
-static int load_shader(const std::filesystem::path &path, const GLenum type, const GLuint program)
+static int load_shader(const GLuint program, const std::filesystem::path &path, const GLenum type)
 {
     std::vector<char> source;
     if (std::ifstream stream(path, std::istream::ate); stream)
@@ -98,6 +104,44 @@ static int load_shader(const std::filesystem::path &path, const GLenum type, con
 
     glAttachShader(program, shader);
     glDeleteShader(shader);
+
+    return 0;
+}
+
+static int link_program(const GLuint program)
+{
+    glLinkProgram(program);
+
+    GLint status;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if (!status)
+    {
+        char buf[1024];
+        GLsizei len;
+        glGetProgramInfoLog(program, sizeof(buf), &len, buf);
+        buf[len] = 0;
+        std::cerr << buf << std::endl;
+        return 1;
+    }
+
+    return 0;
+}
+
+static int validate_program(const GLuint program)
+{
+    glValidateProgram(program);
+
+    GLint status;
+    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
+    if (!status)
+    {
+        char buf[1024];
+        GLsizei len;
+        glGetProgramInfoLog(program, sizeof(buf), &len, buf);
+        buf[len] = 0;
+        std::cerr << buf << std::endl;
+        return 1;
+    }
 
     return 0;
 }
@@ -226,14 +270,25 @@ int main()
 
     const auto program = glCreateProgram();
 
-    if (const auto error = load_shader("asset/shader/default.vert", GL_VERTEX_SHADER, program))
+    if (const auto error = load_shader(program, "asset/shader/default.vert", GL_VERTEX_SHADER))
+        return error;
+    if (const auto error = load_shader(program, "asset/shader/default.frag", GL_FRAGMENT_SHADER))
         return error;
 
-    if (const auto error = load_shader("asset/shader/default.frag", GL_FRAGMENT_SHADER, program))
+    if (const auto error = link_program(program))
+        return error;
+    if (const auto error = validate_program(program))
         return error;
 
-    glLinkProgram(program);
-    glValidateProgram(program);
+    const auto compute_program = glCreateProgram();
+
+    if (const auto error = load_shader(compute_program, "asset/shader/default.glsl", GL_COMPUTE_SHADER))
+        return error;
+
+    if (const auto error = link_program(compute_program))
+        return error;
+    if (const auto error = validate_program(compute_program))
+        return error;
 
     window.Show();
 
@@ -245,6 +300,8 @@ int main()
     {
         glfwPollEvents();
 
+        window.GetFramebufferSize(width, height);
+
         context.data_buffer.Data(
             &context.data,
             sizeof(uniform_data_t),
@@ -252,8 +309,7 @@ int main()
 
         context.data.frame++;
 
-        glEnable(GL_DEPTH_TEST);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT);
 
         context.vertex_array.Bind();
         glUseProgram(program);
