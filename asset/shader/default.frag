@@ -96,6 +96,9 @@ const uint MAX_SAMPLES_ROOT = 50;
 const uint MAX_SAMPLES = MAX_SAMPLES_ROOT * MAX_SAMPLES_ROOT;
 const float INV_MAX_SAMPLES_ROOT = 1.0 / float(MAX_SAMPLES_ROOT);
 
+const uint TILE_W = 100u;
+const uint TILE_H = 100u;
+
 /* ray */
 
 vec3 ray_at(in ray_t self, in float t) {
@@ -659,21 +662,38 @@ vec3 miss(in ray_t ray) {
 
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    ivec2 size = imageSize(accumulation);
+
     vec4 samples = imageLoad(accumulation, pixel);
 
-    if (data.frame >= MAX_SAMPLES) {
-        color = sqrt(samples / MAX_SAMPLES);
+    ivec2 tiles = (size + ivec2(TILE_W - 1, TILE_H - 1)) / ivec2(TILE_W, TILE_H);
+
+    uint tile_count = tiles.x * tiles.y;
+    uint tile_index = data.frame % tile_count;
+    uint sample_index = data.frame / tile_count;
+    ivec2 tile = ivec2(tile_index % tiles.x, tile_index / tiles.x);
+
+    ivec2 tile_min = tile * ivec2(TILE_W, TILE_H);
+    ivec2 tile_max = tile_min + ivec2(TILE_W, TILE_H);
+
+    if (pixel.x < tile_min.x || pixel.y < tile_min.y || pixel.x >= tile_max.x || pixel.y >= tile_max.y) {
+        color = vec4(sqrt(samples.rgb / (float(sample_index) + 1.0)), 1.0);
         return;
     }
 
-    vec2 grid_sample = (vec2(data.frame % MAX_SAMPLES_ROOT, data.frame / MAX_SAMPLES_ROOT) + vec2(random(), random())) * INV_MAX_SAMPLES_ROOT - 0.5;
+    if (sample_index >= MAX_SAMPLES) {
+        color = vec4(sqrt(samples.rgb / (float(MAX_SAMPLES) + 1.0)), 1.0);
+        return;
+    }
 
-    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ data.frame * 26699u;
+    vec2 grid_sample = (vec2(sample_index % MAX_SAMPLES_ROOT, sample_index / MAX_SAMPLES_ROOT) + vec2(random(), random())) * INV_MAX_SAMPLES_ROOT - 0.5;
+
+    seed = uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^ sample_index * 26699u;
 
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
 
-    vec2 pixel_delta = 1.0 / vec2(imageSize(accumulation));
+    vec2 pixel_delta = 1.0 / vec2(size);
     vec2 offset = vec2(pixel_delta.x * grid_sample.x, pixel_delta.y * grid_sample.y);
 
     vec2 ndc = (uv + offset) * 2.0 - 1.0;
@@ -706,5 +726,5 @@ void main() {
     samples = vec4(samples.rgb + radiance, 1.0);
     imageStore(accumulation, pixel, samples);
 
-    color = vec4(sqrt(samples.rgb / (float(data.frame) + 1.0)), 1.0);
+    color = vec4(sqrt(samples.rgb / (float(sample_index) + 1.0)), 1.0);
 }
