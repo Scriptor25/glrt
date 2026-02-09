@@ -3,6 +3,9 @@
 #include <cmath>
 #include <iomanip>
 
+template<typename T, unsigned... I>
+struct swizzle_proxy;
+
 template<unsigned N, typename T>
 struct vec
 {
@@ -24,15 +27,63 @@ struct vec
         return e[i];
     }
 
-    explicit constexpr operator vec<N - 1, T>() const
+    template<unsigned... I>
+    auto swizzle()
     {
-        vec<N - 1, T> v;
-        for (unsigned i = 0; i < N - 1; ++i)
-            v[i] = e[i];
-        return v;
+        static_assert(((I < N) && ...), "swizzle index out of range");
+        return swizzle_proxy<T, I...>{ e };
+    }
+
+    template<unsigned... I>
+    auto swizzle() const
+    {
+        static_assert(((I < N) && ...), "swizzle index out of range");
+        return swizzle_proxy<const T, I...>{ e };
     }
 
     T e[N]{};
+};
+
+template<unsigned...>
+struct is_unique : std::true_type
+{
+};
+
+template<unsigned I, unsigned... R>
+struct is_unique<I, R...> : std::bool_constant<((I != R) && ...) && is_unique<R...>::value>
+{
+};
+
+template<typename T, unsigned... I>
+struct swizzle_proxy
+{
+    T *base;
+
+    static constexpr unsigned N = sizeof...(I);
+
+    explicit operator vec<N, std::remove_const_t<T>>() const
+    {
+        return { base[I]... };
+    }
+
+    template<typename U>
+        requires (!std::is_const_v<T> && is_unique<I...>::value)
+    swizzle_proxy &operator=(const vec<N, U> &other)
+    {
+        unsigned j = 0;
+        ((base[I] = other[j++]), ...);
+        return *this;
+    }
+};
+
+template<typename>
+struct vec_traits;
+
+template<unsigned N, typename T>
+struct vec_traits<vec<N, T>>
+{
+    static constexpr auto size = N;
+    using value_type = T;
 };
 
 template<unsigned N, unsigned M, typename T>
@@ -102,7 +153,7 @@ std::ostream &operator<<(std::ostream &stream, const mat<N, M, T> &m)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr auto operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -111,7 +162,25 @@ constexpr vec<N, T> operator+(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr auto operator+(const T &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs + rhs[i];
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr auto operator+(const vec<N, T> &lhs, const T &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] + rhs;
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr auto operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -120,7 +189,16 @@ constexpr vec<N, T> operator-(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator-(const vec<N, T> &lhs, const T &rhs)
+constexpr auto operator-(const T &lhs, const vec<N, T> &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs - rhs[i];
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr auto operator-(const vec<N, T> &lhs, const T &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -129,16 +207,16 @@ constexpr vec<N, T> operator-(const vec<N, T> &lhs, const T &rhs)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator*(const vec<N, T> &lhs, const T &rhs)
+constexpr auto operator*(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
-        v[i] = lhs[i] * rhs;
+        v[i] = lhs[i] * rhs[i];
     return v;
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
+constexpr auto operator*(const T &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -147,7 +225,16 @@ constexpr vec<N, T> operator*(const T &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator/(const vec<N, T> &lhs, const vec<N, T> &rhs)
+constexpr auto operator*(const vec<N, T> &lhs, const T &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] * rhs;
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr auto operator/(const vec<N, T> &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
@@ -156,20 +243,20 @@ constexpr vec<N, T> operator/(const vec<N, T> &lhs, const vec<N, T> &rhs)
 }
 
 template<unsigned N, typename T>
-constexpr vec<N, T> operator/(const vec<N, T> &lhs, const T &rhs)
-{
-    vec<N, T> v;
-    for (unsigned i = 0; i < N; ++i)
-        v[i] = lhs[i] / rhs;
-    return v;
-}
-
-template<unsigned N, typename T>
-constexpr vec<N, T> operator/(const T &lhs, const vec<N, T> &rhs)
+constexpr auto operator/(const T &lhs, const vec<N, T> &rhs)
 {
     vec<N, T> v;
     for (unsigned i = 0; i < N; ++i)
         v[i] = lhs / rhs[i];
+    return v;
+}
+
+template<unsigned N, typename T>
+constexpr auto operator/(const vec<N, T> &lhs, const T &rhs)
+{
+    vec<N, T> v;
+    for (unsigned i = 0; i < N; ++i)
+        v[i] = lhs[i] / rhs;
     return v;
 }
 

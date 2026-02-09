@@ -46,7 +46,7 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width, const
     context->data.extent = {
         static_cast<std::uint32_t>(width),
         static_cast<std::uint32_t>(height),
-        100u,
+        1600u,
     };
     context->data.frame = {};
 
@@ -217,7 +217,7 @@ int main()
             .inv_view = inv_view,
             .origin = origin,
             .total_light_area = bvh.total_light_area,
-            .tile_extent = { 256u, 256u },
+            .tile_extent = { 64u, 64u },
         },
         .accumulation = gl::Texture(GL_TEXTURE_2D),
     };
@@ -302,8 +302,6 @@ int main()
     {
         glfwPollEvents();
 
-        window.GetFramebufferSize(width, height);
-
         glUseProgram(compute_program);
 
         context.data_buffer.Data(
@@ -311,7 +309,8 @@ int main()
             sizeof(uniform_data_t),
             GL_STATIC_DRAW);
 
-        auto tile_count = (vec2u(context.data.extent) + context.data.tile_extent - 1u) / context.data.tile_extent;
+        auto tile_count = (vec2u(context.data.extent.swizzle<0, 1>()) + context.data.tile_extent - 1u)
+                          / context.data.tile_extent;
         auto total_tile_count = tile_count[0] * tile_count[1];
         auto sample_index = context.data.frame / total_tile_count;
 
@@ -319,9 +318,11 @@ int main()
 
         if (sample_index < context.data.extent[2])
         {
+            auto groups = (context.data.tile_extent + 7u) / 8u;
+
             glDispatchCompute(
-                (context.data.tile_extent[0] + 7) / 8,
-                (context.data.tile_extent[1] + 7) / 8,
+                groups[0],
+                groups[1],
                 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         }

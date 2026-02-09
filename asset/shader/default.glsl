@@ -656,13 +656,13 @@ vec3 miss(in ray_t ray) {
 void main() {
     uvec2 local_pixel = gl_GlobalInvocationID.xy;
 
-    uvec2 tile_count = (data.extent.xy + data.tile_extent - 1u) / data.tile_extent;
+    uvec2 tile_count = (data.extent.xy + (data.tile_extent - 1u)) / data.tile_extent;
     uint total_tile_count = tile_count.x * tile_count.y;
 
     uint tile_index = data.frame % total_tile_count;
     uint sample_index = data.frame / total_tile_count;
 
-    uvec2 tile = uvec2(tile_index % tile_count.x, tile_index / tile_count.y);
+    uvec2 tile = uvec2(tile_index % tile_count.x, tile_index / tile_count.x);
     uvec2 tile_origin = tile * data.tile_extent;
     uvec2 pixel = tile_origin + local_pixel;
 
