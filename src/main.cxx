@@ -151,13 +151,13 @@ static void generate_scene(model_t &data)
 {
     {
         model_t cornell;
-        read_obj("asset/cornell.obj", cornell);
+        read_obj("asset/model/cornell/cornell.obj", cornell);
         data += scale(4.0f, 4.0f, 4.0f) * cornell;
     }
 
     {
         model_t teapot;
-        read_obj("asset/teapot.obj", teapot);
+        read_obj("asset/model/teapot/teapot.obj", teapot);
         data += translation(0.0f, -4.0f, 0.0f) * teapot;
     }
 }
@@ -166,31 +166,31 @@ static void generate_scene1(model_t &data)
 {
     {
         model_t plane;
-        read_obj("asset/plane.obj", plane);
+        read_obj("asset/model/plane/plane.obj", plane);
         data += scale(10.0f, 1.0f, 10.0f) * translation(-0.5f, 0.0f, -0.5f) * plane;
     }
 
     {
         model_t cube;
-        read_obj("asset/cube.obj", cube);
+        read_obj("asset/model/cube/cube.obj", cube);
         data += translation(-1.0f, 0.01f, 2.3f) * cube;
     }
 
     {
         model_t cube;
-        read_obj("asset/cube.obj", cube);
+        read_obj("asset/model/cube/cube.obj", cube);
         data += translation(2.9f, 0.01f, 2.6f) * cube;
     }
 
     {
         model_t cube;
-        read_obj("asset/cube.obj", cube);
+        read_obj("asset/model/cube/cube.obj", cube);
         data += translation(2.6f, 0.01f, -1.2f) * cube;
     }
 
     {
         model_t teapot;
-        read_obj("asset/teapot.obj", teapot);
+        read_obj("asset/model/teapot/teapot.obj", teapot);
         data += translation(0.0f, 0.01f, 0.0f) * teapot;
     }
 }
