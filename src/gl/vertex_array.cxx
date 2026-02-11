@@ -9,6 +9,7 @@ gl::VertexArray::VertexArray()
 gl::VertexArray::~VertexArray()
 {
     glDeleteVertexArrays(1, &m_Handle);
+    m_Handle = 0;
 }
 
 gl::VertexArray::VertexArray(VertexArray &&other) noexcept

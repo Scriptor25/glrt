@@ -9,6 +9,7 @@ gl::Buffer::Buffer()
 gl::Buffer::~Buffer()
 {
     glDeleteBuffers(1, &m_Handle);
+    m_Handle = 0;
 }
 
 gl::Buffer::Buffer(Buffer &&other) noexcept

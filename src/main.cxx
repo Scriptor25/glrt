@@ -1,7 +1,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <istream>
 #include <vector>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -37,6 +36,9 @@ struct context_t
     gl::Buffer map_buffer;
     gl::Buffer light_buffer;
     gl::Buffer light_area_buffer;
+
+    gl::Program draw_program;
+    gl::Program compute_program;
 };
 
 static void framebuffer_size_callback(GLFWwindow *window, const int width, const int height)
@@ -61,90 +63,17 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width, const
 }
 
 static void debug_callback(
-    GLenum source,
-    GLenum type,
-    GLuint id,
-    GLenum severity,
-    GLsizei length,
+    GLenum /*source*/,
+    GLenum /*type*/,
+    GLuint /*id*/,
+    GLenum /*severity*/,
+    GLsizei /*length*/,
     const GLchar *message,
     const void *userParam)
 {
-    auto context = static_cast<const context_t *>(userParam);
+    // auto context = static_cast<const context_t *>(userParam);
 
     std::cerr << message << std::endl;
-}
-
-static int load_shader(const GLuint program, const std::filesystem::path &path, const GLenum type)
-{
-    std::vector<char> source;
-    if (std::ifstream stream(path, std::istream::ate); stream)
-    {
-        source.resize(stream.tellg());
-        stream.seekg(0, std::ios::beg);
-        stream.read(source.data(), static_cast<std::streamsize>(source.size()));
-    }
-
-    const auto shader = glCreateShader(type);
-    const auto data_ptr = source.data();
-    const auto length = static_cast<GLint>(source.size());
-
-    glShaderSource(shader, 1, &data_ptr, &length);
-    glCompileShader(shader);
-
-    GLint status;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-    if (!status)
-    {
-        char buf[1024];
-        GLsizei len;
-        glGetShaderInfoLog(shader, sizeof(buf), &len, buf);
-        buf[len] = 0;
-        std::cerr << buf << std::endl;
-        return 1;
-    }
-
-    glAttachShader(program, shader);
-    glDeleteShader(shader);
-
-    return 0;
-}
-
-static int link_program(const GLuint program)
-{
-    glLinkProgram(program);
-
-    GLint status;
-    glGetProgramiv(program, GL_LINK_STATUS, &status);
-    if (!status)
-    {
-        char buf[1024];
-        GLsizei len;
-        glGetProgramInfoLog(program, sizeof(buf), &len, buf);
-        buf[len] = 0;
-        std::cerr << buf << std::endl;
-        return 1;
-    }
-
-    return 0;
-}
-
-static int validate_program(const GLuint program)
-{
-    glValidateProgram(program);
-
-    GLint status;
-    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
-    if (!status)
-    {
-        char buf[1024];
-        GLsizei len;
-        glGetProgramInfoLog(program, sizeof(buf), &len, buf);
-        buf[len] = 0;
-        std::cerr << buf << std::endl;
-        return 1;
-    }
-
-    return 0;
 }
 
 static void generate_scene(model_t &data)
@@ -159,39 +88,6 @@ static void generate_scene(model_t &data)
         model_t teapot;
         read_obj("asset/model/teapot/teapot.obj", teapot);
         data += translation(0.0f, -4.0f, 0.0f) * teapot;
-    }
-}
-
-static void generate_scene1(model_t &data)
-{
-    {
-        model_t plane;
-        read_obj("asset/model/plane/plane.obj", plane);
-        data += scale(10.0f, 1.0f, 10.0f) * translation(-0.5f, 0.0f, -0.5f) * plane;
-    }
-
-    {
-        model_t cube;
-        read_obj("asset/model/cube/cube.obj", cube);
-        data += translation(-1.0f, 0.01f, 2.3f) * cube;
-    }
-
-    {
-        model_t cube;
-        read_obj("asset/model/cube/cube.obj", cube);
-        data += translation(2.9f, 0.01f, 2.6f) * cube;
-    }
-
-    {
-        model_t cube;
-        read_obj("asset/model/cube/cube.obj", cube);
-        data += translation(2.6f, 0.01f, -1.2f) * cube;
-    }
-
-    {
-        model_t teapot;
-        read_obj("asset/model/teapot/teapot.obj", teapot);
-        data += translation(0.0f, 0.01f, 0.0f) * teapot;
     }
 }
 
@@ -221,6 +117,8 @@ int main()
         },
         .accumulation = gl::Texture(GL_TEXTURE_2D),
     };
+
+    gl::Error error;
 
     window.SetUserPointer(&context);
     window.SetFramebufferSizeCallback(framebuffer_size_callback);
@@ -270,27 +168,47 @@ int main()
         bvh.light_areas.size() * sizeof(std::uint32_t),
         GL_STATIC_DRAW);
 
-    const auto program = glCreateProgram();
+    if (context.draw_program.LoadShaderSource("asset/shader/default.vert", GL_VERTEX_SHADER, error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
-    if (const auto error = load_shader(program, "asset/shader/default.vert", GL_VERTEX_SHADER))
-        return error;
-    if (const auto error = load_shader(program, "asset/shader/default.frag", GL_FRAGMENT_SHADER))
-        return error;
+    if (context.draw_program.LoadShaderSource("asset/shader/default.frag", GL_FRAGMENT_SHADER, error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
-    if (const auto error = link_program(program))
-        return error;
-    if (const auto error = validate_program(program))
-        return error;
+    if (context.draw_program.Link(error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
-    const auto compute_program = glCreateProgram();
+    if (context.draw_program.Validate(error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
-    if (const auto error = load_shader(compute_program, "asset/shader/default.glsl", GL_COMPUTE_SHADER))
-        return error;
+    if (context.compute_program.LoadShaderSource("asset/shader/default.glsl", GL_COMPUTE_SHADER, error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
-    if (const auto error = link_program(compute_program))
-        return error;
-    if (const auto error = validate_program(compute_program))
-        return error;
+    if (context.compute_program.Link(error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
+
+    if (context.compute_program.Validate(error); error)
+    {
+        std::cerr << error.message() << std::endl;
+        return error.code();
+    }
 
     window.Show();
 
@@ -302,7 +220,7 @@ int main()
     {
         glfwPollEvents();
 
-        glUseProgram(compute_program);
+        context.compute_program.Bind();
 
         context.data_buffer.Data(
             &context.data,
@@ -328,13 +246,11 @@ int main()
         }
 
         context.vertex_array.Bind();
-        glUseProgram(program);
+        context.draw_program.Bind();
 
         glClear(GL_COLOR_BUFFER_BIT);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
         window.SwapBuffers();
     }
-
-    glDeleteProgram(program);
 }

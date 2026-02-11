@@ -9,6 +9,7 @@ gl::Texture::Texture(const GLenum target)
 gl::Texture::~Texture()
 {
     glDeleteTextures(1, &m_Handle);
+    m_Handle = 0;
 }
 
 gl::Texture::Texture(Texture &&other) noexcept
