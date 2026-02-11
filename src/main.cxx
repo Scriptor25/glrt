@@ -192,7 +192,7 @@ int main()
         return error.code();
     }
 
-    if (context.compute_program.LoadShaderSource("asset/shader/default.glsl", GL_COMPUTE_SHADER, error); error)
+    if (context.compute_program.LoadShaderSource("asset/shader/default.comp", GL_COMPUTE_SHADER, error); error)
     {
         std::cerr << error.message() << std::endl;
         return error.code();
