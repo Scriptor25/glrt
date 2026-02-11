@@ -97,7 +97,7 @@ namespace gl
         Shader &operator=(Shader &&) noexcept;
 
         void Source(const GLchar *source, GLint length) const;
-        void Binary(GLenum format, const void *binary, GLsizei length) const;
+        void Binary(GLenum format, const void *binary, GLsizei length, Error &error) const;
 
         void Compile(Error &error) const;
 
@@ -127,6 +127,7 @@ namespace gl
         void Binary(GLenum format, const void *binary, GLsizei length, Error &error) const;
 
         void LoadShaderSource(const std::filesystem::path &path, GLenum type, Error &error) const;
+        void LoadShaderBinary(const std::filesystem::path &path, GLenum type, GLenum format, Error &error) const;
 
     private:
         GLuint m_Handle{};

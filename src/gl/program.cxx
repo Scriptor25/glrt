@@ -73,7 +73,11 @@ void gl::Program::Validate(Error &error) const
     }
 }
 
-void gl::Program::Binary(const GLenum format, const void *binary, const GLsizei length, Error &error) const
+void gl::Program::Binary(
+    const GLenum format,
+    const void *binary,
+    const GLsizei length,
+    Error &error) const
 {
     glProgramBinary(m_Handle, format, binary, length);
 
@@ -90,10 +94,13 @@ void gl::Program::Binary(const GLenum format, const void *binary, const GLsizei 
     }
 }
 
-void gl::Program::LoadShaderSource(const std::filesystem::path &path, const GLenum type, Error &error) const
+void gl::Program::LoadShaderSource(
+    const std::filesystem::path &path,
+    const GLenum type,
+    Error &error) const
 {
     std::vector<char> source;
-    if (std::ifstream stream(path, std::istream::ate); stream)
+    if (std::ifstream stream(path, std::ifstream::ate); stream)
     {
         source.resize(stream.tellg());
         stream.seekg(0, std::ios::beg);
@@ -104,6 +111,29 @@ void gl::Program::LoadShaderSource(const std::filesystem::path &path, const GLen
     shader.Source(source.data(), static_cast<GLint>(source.size()));
 
     shader.Compile(error);
+
+    if (!error)
+    {
+        Attach(shader);
+    }
+}
+
+void gl::Program::LoadShaderBinary(
+    const std::filesystem::path &path,
+    const GLenum type,
+    const GLenum format,
+    Error &error) const
+{
+    std::vector<char> binary;
+    if (std::ifstream stream(path, std::ifstream::ate | std::ifstream::binary); stream)
+    {
+        binary.resize(stream.tellg());
+        stream.seekg(0, std::ios::beg);
+        stream.read(binary.data(), static_cast<std::streamsize>(binary.size()));
+    }
+
+    const Shader shader(type);
+    shader.Binary(format, binary.data(), static_cast<GLint>(binary.size()), error);
 
     if (!error)
     {

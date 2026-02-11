@@ -168,13 +168,21 @@ int main()
         bvh.light_areas.size() * sizeof(std::uint32_t),
         GL_STATIC_DRAW);
 
-    if (context.draw_program.LoadShaderSource("asset/shader/default.vert", GL_VERTEX_SHADER, error); error)
+    if (context.draw_program.LoadShaderBinary(
+        "asset/shader/default.vert.spv",
+        GL_VERTEX_SHADER,
+        GL_SHADER_BINARY_FORMAT_SPIR_V,
+        error); error)
     {
         std::cerr << error.message() << std::endl;
         return error.code();
     }
 
-    if (context.draw_program.LoadShaderSource("asset/shader/default.frag", GL_FRAGMENT_SHADER, error); error)
+    if (context.draw_program.LoadShaderBinary(
+        "asset/shader/default.frag.spv",
+        GL_FRAGMENT_SHADER,
+        GL_SHADER_BINARY_FORMAT_SPIR_V,
+        error); error)
     {
         std::cerr << error.message() << std::endl;
         return error.code();
@@ -192,7 +200,11 @@ int main()
         return error.code();
     }
 
-    if (context.compute_program.LoadShaderSource("asset/shader/default.comp", GL_COMPUTE_SHADER, error); error)
+    if (context.compute_program.LoadShaderBinary(
+        "asset/shader/default.comp.spv",
+        GL_COMPUTE_SHADER,
+        GL_SHADER_BINARY_FORMAT_SPIR_V,
+        error); error)
     {
         std::cerr << error.message() << std::endl;
         return error.code();
